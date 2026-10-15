@@ -1,0 +1,1 @@
+package com.harish.student_management.service; import com.harish.student_management.dto.AchievementDtos.*; import java.util.*; public interface AchievementService { Response create(Request r,Long teacherId); List<Response> student(Long id); }

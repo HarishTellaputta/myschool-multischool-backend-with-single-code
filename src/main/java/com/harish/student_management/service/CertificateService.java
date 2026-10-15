@@ -1,0 +1,1 @@
+package com.harish.student_management.service; import com.harish.student_management.dto.CertificateDtos.*; import java.util.*; public interface CertificateService { Object template(TemplateRequest r); Response generate(GenerateRequest r); List<Response> student(Long id); byte[] download(Long id); }

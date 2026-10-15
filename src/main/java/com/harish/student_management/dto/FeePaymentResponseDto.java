@@ -1,0 +1,1 @@
+package com.harish.student_management.dto; import lombok.*; import java.math.*; import java.time.*; @Data @Builder public class FeePaymentResponseDto { Long id,studentFeeId,studentId; String studentName,receiptNumber,paymentMethod,remarks; BigDecimal amount; LocalDate paymentDate; }

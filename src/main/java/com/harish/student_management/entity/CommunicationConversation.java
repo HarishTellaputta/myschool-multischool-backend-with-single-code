@@ -1,0 +1,3 @@
+package com.harish.student_management.entity;
+import jakarta.persistence.*; import lombok.*; import java.time.*;
+@Entity @Table(name="communication_conversations") @Data @Builder @NoArgsConstructor @AllArgsConstructor public class CommunicationConversation { @Id @GeneratedValue(strategy=GenerationType.IDENTITY) Long id; @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="parent_id",nullable=false) Parent parent; @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="teacher_id",nullable=false) Teacher teacher; @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="student_id",nullable=false) Student student; @Column(length=100) String subject; @Column(name="created_at",updatable=false) LocalDateTime createdAt; @PrePersist void create(){createdAt=LocalDateTime.now();}}

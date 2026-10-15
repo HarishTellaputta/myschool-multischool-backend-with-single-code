@@ -1,0 +1,1 @@
+package com.harish.student_management.repository; import com.harish.student_management.entity.Bus; import org.springframework.data.jpa.repository.JpaRepository; public interface BusRepository extends JpaRepository<Bus,Long>{}

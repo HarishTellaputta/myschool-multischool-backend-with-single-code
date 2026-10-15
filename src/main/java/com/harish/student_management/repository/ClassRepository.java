@@ -1,0 +1,26 @@
+package com.harish.student_management.repository;
+
+import com.harish.student_management.entity.ClassEntity;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
+@Repository
+public interface ClassRepository extends JpaRepository<ClassEntity, Long> {
+
+    Optional<ClassEntity> findByCode(String code);
+
+    boolean existsByCode(String code);
+
+    List<ClassEntity> findBySchoolId(Long schoolId);
+
+    Optional<ClassEntity> findByIdAndSchoolId(Long id, Long schoolId);
+
+    Optional<ClassEntity> findByNameIgnoreCase(String name);
+
+    Optional<ClassEntity> findByNameIgnoreCaseAndSchoolId(
+            String name,
+            Long schoolId
+    );
+}

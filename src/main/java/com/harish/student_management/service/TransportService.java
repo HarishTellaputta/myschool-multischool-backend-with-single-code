@@ -1,0 +1,1 @@
+package com.harish.student_management.service; import com.harish.student_management.dto.*; import java.util.*; public interface TransportService { TransportResponseDto allocate(TransportDtos.AllocationRequest r); List<TransportResponseDto> byStudent(Long id); List<TransportResponseDto> all(); }

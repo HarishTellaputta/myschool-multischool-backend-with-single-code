@@ -1,0 +1,1 @@
+package com.harish.student_management.dto; import jakarta.validation.constraints.*; import lombok.*; @Data public class MessageRequestDto { @NotBlank String content; @Pattern(regexp="(?i)TEXT|VOICE",message="Message type must be TEXT or VOICE") String messageType; }

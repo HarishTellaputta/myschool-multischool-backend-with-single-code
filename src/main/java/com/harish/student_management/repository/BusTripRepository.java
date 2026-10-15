@@ -1,0 +1,1 @@
+package com.harish.student_management.repository; import com.harish.student_management.entity.BusTrip; import org.springframework.data.jpa.repository.JpaRepository; import java.util.*; public interface BusTripRepository extends JpaRepository<BusTrip,Long>{Optional<BusTrip> findFirstByBusIdAndStatusOrderByStartedAtDesc(Long busId,String status);}

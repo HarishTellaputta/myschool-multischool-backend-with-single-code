@@ -1,0 +1,1 @@
+package com.harish.student_management.service; import com.harish.student_management.entity.*; import java.util.*; public interface BusEtaProvider { OptionalInt estimateMinutes(BusTrip trip,double latitude,double longitude); }

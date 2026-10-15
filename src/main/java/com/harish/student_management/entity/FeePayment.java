@@ -1,0 +1,4 @@
+package com.harish.student_management.entity;
+import jakarta.persistence.*; import lombok.*; import java.time.*;
+@Entity @Table(name="fee_payments") @Data @Builder @NoArgsConstructor @AllArgsConstructor
+ public class FeePayment { @Id @GeneratedValue(strategy=GenerationType.IDENTITY) private Long id; @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="student_fee_id",nullable=false) private StudentFee studentFee; @Column(nullable=false,precision=19,scale=2) private java.math.BigDecimal amount; @Column(name="payment_date",nullable=false) private LocalDate paymentDate; @Column(name="receipt_number",nullable=false,unique=true,length=50) private String receiptNumber; @Column(length=30) private String paymentMethod; @Column(length=500) private String remarks; @Column(name="created_at",updatable=false) private LocalDateTime createdAt; @PrePersist void create(){createdAt=LocalDateTime.now();if(paymentDate==null)paymentDate=LocalDate.now();} }

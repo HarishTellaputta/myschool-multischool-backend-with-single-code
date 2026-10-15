@@ -1,0 +1,1 @@
+package com.harish.student_management.dto; import lombok.*; import java.time.*; import java.util.*; @Data @Builder public class ConversationResponseDto { Long id,parentId,teacherId,studentId; String teacherName,studentName,subject; LocalDateTime createdAt; List<MessageResponseDto> messages; Long unreadCount; }

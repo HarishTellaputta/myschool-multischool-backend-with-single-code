@@ -1,0 +1,1 @@
+package com.harish.student_management.dto; import jakarta.validation.constraints.*; import lombok.*; import java.math.*; import java.time.*; @Data public class StudentFeeAssignmentRequestDto { @NotNull private Long studentId; @NotNull private Long feeStructureId; @DecimalMin("0.01") private BigDecimal totalAmount; private LocalDate dueDate; }

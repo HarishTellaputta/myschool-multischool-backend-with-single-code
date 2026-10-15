@@ -1,0 +1,1 @@
+package com.harish.student_management.service; import com.harish.student_management.entity.*; import org.springframework.stereotype.Component; import java.util.*; @Component public class DefaultBusEtaProvider implements BusEtaProvider { public OptionalInt estimateMinutes(BusTrip trip,double latitude,double longitude){return OptionalInt.empty();} }

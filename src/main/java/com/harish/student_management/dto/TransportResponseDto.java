@@ -1,0 +1,1 @@
+package com.harish.student_management.dto; import lombok.*; @Data @Builder public class TransportResponseDto { Long id,studentId,busId,routeId,pickupPointId,dropPointId; String studentName,busRegistration,routeName,driverName,pickupPoint,dropPoint,status; }

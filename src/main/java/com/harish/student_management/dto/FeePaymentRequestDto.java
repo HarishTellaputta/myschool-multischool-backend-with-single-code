@@ -1,0 +1,1 @@
+package com.harish.student_management.dto; import jakarta.validation.constraints.*; import lombok.*; import java.math.*; @Data public class FeePaymentRequestDto { @NotNull private Long studentFeeId; @NotNull @DecimalMin("0.01") private BigDecimal amount; private String paymentMethod; private String remarks; }

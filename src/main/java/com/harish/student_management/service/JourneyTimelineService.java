@@ -1,0 +1,1 @@
+package com.harish.student_management.service; import com.harish.student_management.dto.JourneyTimelineDto; import java.time.*; public interface JourneyTimelineService { JourneyTimelineDto today(Long studentId); JourneyTimelineDto forDate(Long studentId,LocalDate date); }

@@ -1,0 +1,1 @@
+package com.harish.student_management.dto; import lombok.*; import java.time.*; @Data @Builder public class CalendarEventResponseDto { Long id; String title,description,eventType,audience,status; LocalDate startDate,endDate; Long classId,sectionId; String className,sectionName; }

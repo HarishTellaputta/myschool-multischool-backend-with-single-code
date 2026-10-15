@@ -1,0 +1,1 @@
+package com.harish.student_management.dto; import lombok.*; import java.time.*; import java.util.*; @Data @Builder public class JourneyTimelineDto { Long studentId; String studentName; LocalDate date; List<JourneyEventDto> events; }
