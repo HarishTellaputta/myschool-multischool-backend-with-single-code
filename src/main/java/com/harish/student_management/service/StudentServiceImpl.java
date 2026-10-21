@@ -11,6 +11,14 @@ import com.harish.student_management.exception.StudentNotFoundException;
 import com.harish.student_management.mapper.StudentMapper;
 import com.harish.student_management.repository.SectionRepository;
 import com.harish.student_management.repository.StudentRepository;
+import com.harish.student_management.entity.User;
+import com.harish.student_management.repository.UserRepository;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import com.harish.student_management.entity.Parent;
+import com.harish.student_management.entity.AcademicYear;
+import com.harish.student_management.repository.ParentRepository;
+import com.harish.student_management.repository.AcademicYearRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -25,6 +33,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.math.BigInteger;
 import java.net.MalformedURLException;
 import java.nio.file.Files;
@@ -46,6 +55,10 @@ public class StudentServiceImpl implements StudentService {
     private final StudentRepository repository;
     private final SectionRepository sectionRepository;
     private final StudentMapper mapper;
+    private final UserRepository userRepository;
+
+    private final ParentRepository parentRepository;
+    private final AcademicYearRepository academicYearRepository;
 
 
     // ============================================================
@@ -84,6 +97,11 @@ public class StudentServiceImpl implements StudentService {
          * 2. RESOLVE SELECTED SECTION
          * ============================================================
          */
+        if (student.getSectionId() == null) {
+            throw new IllegalArgumentException(
+                    "Section is required"
+            );
+        }
         Section section =
                 sectionRepository
                         .findByIdWithClassAndSchool(student.getSectionId())
@@ -92,6 +110,20 @@ public class StudentServiceImpl implements StudentService {
                                         "Selected section was not found."
                                 )
                         );
+
+        // Validate that the selected section belongs to the logged-in school
+        Long currentSchoolId = getCurrentSchoolId();
+
+        if (section.getClassEntity() == null
+                || section.getClassEntity().getSchool() == null
+                || section.getClassEntity().getSchool().getId() == null
+                || !currentSchoolId.equals(
+                section.getClassEntity().getSchool().getId())) {
+
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Selected section does not belong to your school"
+            );
+        }
 
         /*
          * ============================================================
@@ -200,6 +232,38 @@ public class StudentServiceImpl implements StudentService {
          */
         Student studentEntity =
                 mapper.toEntity(student);
+
+
+        if (student.getParentId() != null) {
+            Parent parent = parentRepository
+                    .findByIdAndUser_School_Id(
+                            student.getParentId(),
+                            currentSchoolId
+                    )
+                    .orElseThrow(() ->
+                            new org.springframework.security.access.AccessDeniedException(
+                                    "Selected parent does not belong to your school"
+                            )
+                    );
+
+            studentEntity.setParent(parent);
+        }
+
+        if (student.getAcademicYearId() != null) {
+            AcademicYear academicYear = academicYearRepository
+                    .findByIdAndSchool_Id(
+                            student.getAcademicYearId(),
+                            currentSchoolId
+                    )
+                    .orElseThrow(() ->
+                            new org.springframework.security.access.AccessDeniedException(
+                                    "Selected academic year does not belong to your school"
+                            )
+                    );
+
+            studentEntity.setAcademicYear(academicYear);
+        }
+
 
         /*
          * ============================================================
@@ -373,7 +437,8 @@ public class StudentServiceImpl implements StudentService {
                  * situations if another record already contains
                  * the generated value.
                  */
-                while (repository.existsByAdmissionNo(generated)) {
+                while (repository.existsByAdmissionNoAndSection_ClassEntity_School_Id(
+                        generated, schoolId)) {
 
                     next = next.add(BigInteger.ONE);
 
@@ -451,8 +516,13 @@ public class StudentServiceImpl implements StudentService {
         Pageable pageable =
                 PageRequest.of(page, size, sort);
 
+        Long schoolId = getCurrentSchoolId();
+
         Page<Student> students =
-                repository.findAll(pageable);
+                repository.findAllBySection_ClassEntity_School_Id(
+                        schoolId,
+                        pageable
+                );
 
         return students.map(mapper::toResponseDto);
     }
@@ -467,8 +537,13 @@ public class StudentServiceImpl implements StudentService {
 
         logger.info("Student {}", id);
 
+        Long schoolId = getCurrentSchoolId();
+
         Student student =
-                repository.findById(id)
+                repository.findByIdAndSection_ClassEntity_School_Id(
+                                id,
+                                schoolId
+                        )
                         .orElseThrow(() ->
                                 new StudentNotFoundException(
                                         "Student not found with id : " + id
@@ -498,12 +573,16 @@ public class StudentServiceImpl implements StudentService {
                 id
         );
 
+        Long schoolId = getCurrentSchoolId();
+
         Student dbStudent =
-                repository.findById(id)
+                repository.findByIdAndSection_ClassEntity_School_Id(
+                                id,
+                                schoolId
+                        )
                         .orElseThrow(() ->
                                 new StudentNotFoundException(
-                                        "Student not found with id : "
-                                                + id
+                                        "Student not found with id : " + id
                                 )
                         );
 
@@ -532,6 +611,9 @@ public class StudentServiceImpl implements StudentService {
         // Basic information
         dbStudent.setRollNumber(student.getRollNumber());
         dbStudent.setName(student.getName());
+        if (student.getSurname() != null) {
+            dbStudent.setSurname(student.getSurname());
+        }
         dbStudent.setEmail(student.getEmail());
         dbStudent.setPhone(student.getPhone());
 
@@ -565,23 +647,66 @@ public class StudentServiceImpl implements StudentService {
                 student.getAcademicYearId()
         );
 
-        dbStudent.setSection(
-                mapper.mapSectionIdToSection(
-                        student.getSectionId()
-                )
-        );
+        if (student.getSectionId() == null) {
+            throw new IllegalArgumentException("Section is required");
+        }
 
-        dbStudent.setParent(
-                mapper.mapParentIdToParent(
-                        student.getParentId()
-                )
-        );
+        Section section = sectionRepository
+                .findByIdWithClassAndSchool(student.getSectionId())
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "Section not found"
+                        )
+                );
 
-        dbStudent.setAcademicYear(
-                mapper.mapAcademicYearIdToAcademicYear(
-                        student.getAcademicYearId()
-                )
-        );
+        if (section.getClassEntity() == null
+                || section.getClassEntity().getSchool() == null
+                || !schoolId.equals(
+                section.getClassEntity().getSchool().getId()
+        )) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Selected section does not belong to your school"
+            );
+        }
+
+        dbStudent.setSection(section);
+
+
+
+        Parent parent = null;
+
+        if (student.getParentId() != null) {
+            parent = parentRepository
+                    .findByIdAndUser_School_Id(
+                            student.getParentId(),
+                            schoolId
+                    )
+                    .orElseThrow(() ->
+                            new org.springframework.security.access.AccessDeniedException(
+                                    "Selected parent does not belong to your school"
+                            )
+                    );
+        }
+
+        dbStudent.setParent(parent);
+
+        AcademicYear academicYear = null;
+
+        if (student.getAcademicYearId() != null) {
+            academicYear = academicYearRepository
+                    .findByIdAndSchool_Id(
+                            student.getAcademicYearId(),
+                            schoolId
+                    )
+                    .orElseThrow(() ->
+                            new org.springframework.security.access.AccessDeniedException(
+                                    "Selected academic year does not belong to your school"
+                            )
+                    );
+        }
+
+        dbStudent.setAcademicYear(academicYear);
+
 
         logger.info(
                 "Section after mapping: {}",
@@ -632,49 +757,42 @@ public class StudentServiceImpl implements StudentService {
     @Override
     public void deleteStudent(Long id) {
 
-        logger.info("Student {}", id);
+        Long schoolId = getCurrentSchoolId();
 
         Student student =
-                repository.findById(id)
+                repository.findByIdAndSection_ClassEntity_School_Id(
+                                id,
+                                schoolId
+                        )
                         .orElseThrow(() ->
                                 new StudentNotFoundException(
-                                        "Student not found with id : "
-                                                + id
+                                        "Student not found with id : " + id
                                 )
                         );
 
-        logger.info(
-                "Successfully fetched Student details by id {}",
-                id
-        );
-
         repository.delete(student);
-
-        logger.info(
-                "Student deleted successfully. Admission number {} will not be reused.",
-                student.getAdmissionNo()
-        );
     }
-
 
     // ============================================================
     // FILE UPLOAD
     // ============================================================
 
-    @Override
-    public FileUploadResponseDto uploadFile(
-            MultipartFile file) throws IOException {
 
-        // 1. Empty file validation
-        if (file.isEmpty()) {
+    @Override
+    public FileUploadResponseDto uploadFile(MultipartFile file) throws IOException {
+
+        // 1. Authenticate the current school
+        Long schoolId = getCurrentSchoolId();
+
+        // 2. Empty file validation
+        if (file == null || file.isEmpty()) {
             throw new FileUploadException(
                     "Please select a file to upload"
             );
         }
 
-        // 2. File type validation
-        String contentType =
-                file.getContentType();
+        // 3. File type validation
+        String contentType = file.getContentType();
 
         if (contentType == null ||
                 !(contentType.equals("application/pdf")
@@ -686,9 +804,8 @@ public class StudentServiceImpl implements StudentService {
             );
         }
 
-        // 3. File size validation
-        long maxSize =
-                5 * 1024 * 1024;
+        // 4. File size validation
+        long maxSize = 5L * 1024 * 1024;
 
         if (file.getSize() > maxSize) {
             throw new FileUploadException(
@@ -696,57 +813,89 @@ public class StudentServiceImpl implements StudentService {
             );
         }
 
-        Path uploadPath =
-                Paths.get("uploads");
+        // 5. Create a separate directory for each school
+        Path uploadPath = Paths.get("uploads", "school-" + schoolId)
+                .toAbsolutePath()
+                .normalize();
 
-        if (!Files.exists(uploadPath)) {
-            Files.createDirectories(uploadPath);
+        Files.createDirectories(uploadPath);
+
+        // 6. Generate a safe, unique filename
+        String extension;
+
+        if ("application/pdf".equals(contentType)) {
+            extension = ".pdf";
+        } else if ("image/jpeg".equals(contentType)) {
+            extension = ".jpg";
+        } else {
+            extension = ".png";
         }
 
-        String fileName =
-                UUID.randomUUID()
-                        + "_"
-                        + file.getOriginalFilename();
+        String fileName = UUID.randomUUID() + extension;
 
-        Path filePath =
-                uploadPath.resolve(fileName);
+        Path filePath = uploadPath.resolve(fileName).normalize();
 
-        Files.copy(
-                file.getInputStream(),
-                filePath,
-                StandardCopyOption.REPLACE_EXISTING
-        );
+        if (!filePath.startsWith(uploadPath)) {
+            throw new FileUploadException("Invalid file path");
+        }
+
+        // 7. Save the file
+        try (InputStream inputStream = file.getInputStream()) {
+            Files.copy(inputStream, filePath);
+        }
 
         return FileUploadResponseDto.builder()
                 .message("File uploaded successfully")
                 .fileName(fileName)
-                .fileType(file.getContentType())
+                .fileType(contentType)
                 .fileSize(file.getSize())
                 .build();
     }
-
 
     // ============================================================
     // DOWNLOAD FILE
     // ============================================================
 
+
     @Override
-    public Resource downloadFile(
-            String fileName)
+    public Resource downloadFile(String fileName)
             throws MalformedURLException {
 
-        Path filePath =
-                Paths.get("uploads")
-                        .resolve(fileName);
+        Long schoolId = getCurrentSchoolId();
 
-        Resource resource =
-                new UrlResource(
-                        filePath.toUri()
-                );
+        // Reject empty names and path traversal attempts
+        if (fileName == null
+                || fileName.isBlank()
+                || !fileName.equals(Paths.get(fileName).getFileName().toString())
+                || fileName.contains("/")
+                || fileName.contains("\\")) {
 
-        if (!resource.exists()) {
+            throw new FileUploadException("Invalid file name");
+        }
+
+        // Access only the current school's directory
+        Path uploadPath = Paths.get(
+                "uploads",
+                "school-" + schoolId
+        ).toAbsolutePath().normalize();
+
+        Path filePath = uploadPath.resolve(fileName).normalize();
+
+        if (!filePath.startsWith(uploadPath)) {
+            throw new FileUploadException("Invalid file path");
+        }
+
+        if (!Files.isRegularFile(filePath)) {
             throw new FileUploadException(
                     "File not found : " + fileName
+            );
+        }
+
+        Resource resource = new UrlResource(filePath.toUri());
+
+        if (!resource.exists() || !resource.isReadable()) {
+            throw new FileUploadException(
+                    "File not found or cannot be read : " + fileName
             );
         }
 
@@ -758,26 +907,46 @@ public class StudentServiceImpl implements StudentService {
     // DELETE FILE
     // ============================================================
 
+
     @Override
-    public String deleteFile(
-            String fileName)
-            throws IOException {
+    public String deleteFile(String fileName) throws IOException {
 
-        Path filePath =
-                Paths.get("uploads")
-                        .resolve(fileName);
+        Long schoolId = getCurrentSchoolId();
 
-        if (!Files.exists(filePath)) {
+        // 1. Validate the file name
+        if (fileName == null
+                || fileName.isBlank()
+                || !fileName.equals(Paths.get(fileName).getFileName().toString())
+                || fileName.contains("/")
+                || fileName.contains("\\")) {
+
+            throw new FileUploadException("Invalid file name");
+        }
+
+        // 2. Restrict access to the current school's folder
+        Path uploadPath = Paths.get(
+                "uploads",
+                "school-" + schoolId
+        ).toAbsolutePath().normalize();
+
+        Path filePath = uploadPath.resolve(fileName).normalize();
+
+        if (!filePath.startsWith(uploadPath)) {
+            throw new FileUploadException("Invalid file path");
+        }
+
+        // 3. Ensure the file exists and is a regular file
+        if (!Files.isRegularFile(filePath)) {
             throw new FileUploadException(
                     "File not found : " + fileName
             );
         }
 
+        // 4. Delete only the file inside this school's folder
         Files.delete(filePath);
 
         return "File deleted successfully";
     }
-
 
     // ============================================================
     // GET STUDENTS BY CLASS
@@ -792,8 +961,13 @@ public class StudentServiceImpl implements StudentService {
                 classId
         );
 
+        Long schoolId = getCurrentSchoolId();
+
         return repository
-                .findBySection_ClassEntity_Id(classId)
+                .findBySection_ClassEntity_IdAndSection_ClassEntity_School_Id(
+                        classId,
+                        schoolId
+                )
                 .stream()
                 .map(mapper::toResponseDto)
                 .toList();
@@ -813,8 +987,13 @@ public class StudentServiceImpl implements StudentService {
                 sectionId
         );
 
+        Long schoolId = getCurrentSchoolId();
+
         return repository
-                .findBySectionId(sectionId)
+                .findBySection_IdAndSection_ClassEntity_School_Id(
+                        sectionId,
+                        schoolId
+                )
                 .stream()
                 .map(mapper::toResponseDto)
                 .toList();
@@ -828,14 +1007,23 @@ public class StudentServiceImpl implements StudentService {
     @Override
     public StudentGenderSummaryDto getStudentGenderSummary() {
 
+        Long schoolId = getCurrentSchoolId();
+
         long totalStudents =
-                repository.count();
+                repository.countBySection_ClassEntity_School_Id(schoolId);
 
         long boys =
-                repository.countByGenderIgnoreCase("MALE");
+                repository.countByGenderIgnoreCaseAndSection_ClassEntity_School_Id(
+                        "MALE",
+                        schoolId
+                );
 
         long girls =
-                repository.countByGenderIgnoreCase("FEMALE");
+                repository.countByGenderIgnoreCaseAndSection_ClassEntity_School_Id(
+                        "FEMALE",
+                        schoolId
+                );
+
 
         return StudentGenderSummaryDto.builder()
                 .totalStudents(totalStudents)
@@ -870,5 +1058,38 @@ public class StudentServiceImpl implements StudentService {
         }
 
         return String.valueOf(maxRollNumber + 1);
+    }
+
+    private User getCurrentUser() {
+        Authentication authentication =
+                SecurityContextHolder.getContext().getAuthentication();
+
+        if (authentication == null
+                || !authentication.isAuthenticated()
+                || "anonymousUser".equals(authentication.getName())) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "User is not authenticated"
+            );
+        }
+
+        return userRepository.findByUsername(authentication.getName())
+                .orElseThrow(() ->
+                        new org.springframework.security.access.AccessDeniedException(
+                                "Authenticated user not found"
+                        )
+                );
+    }
+
+    private Long getCurrentSchoolId() {
+        User user = getCurrentUser();
+
+        if (user.getSchool() == null
+                || user.getSchool().getId() == null) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Logged-in user is not assigned to a school"
+            );
+        }
+
+        return user.getSchool().getId();
     }
 }

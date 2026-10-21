@@ -22,6 +22,9 @@ public class Parent {
     @Column(nullable = false, length = 100)
     private String fatherName;
 
+    @Column(name = "surname", length = 100)
+    private String surname;
+
     @Column(length = 100)
     private String motherName;
 

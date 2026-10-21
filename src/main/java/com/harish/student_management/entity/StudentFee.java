@@ -3,6 +3,7 @@ package com.harish.student_management.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.math.BigDecimal;
 import java.time.*;
 
 @Entity
@@ -29,6 +30,26 @@ public class StudentFee {
     private LocalDate dueDate;
     @Column(length = 20)
     private String status;
+
+    @Column(name = "discount_type", length = 20)
+    @Builder.Default
+    private String discountType = "NONE";
+
+    @Column(name = "discount_value", nullable = false,
+            precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal discountValue = BigDecimal.ZERO;
+
+    @Column(name = "discount_amount", nullable = false,
+            precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal discountAmount = BigDecimal.ZERO;
+
+    @Column(name = "discount_reason", length = 255)
+    private String discountReason;
+
+    @Column(name = "discount_approved_by", length = 100)
+    private String discountApprovedBy;
 
     @PrePersist
     void create() {

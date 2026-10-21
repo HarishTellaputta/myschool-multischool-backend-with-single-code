@@ -5,6 +5,11 @@ import com.harish.student_management.dto.AcademicYearResponseDto;
 import com.harish.student_management.entity.AcademicYear;
 import com.harish.student_management.exception.ResourceNotFoundException;
 import com.harish.student_management.repository.AcademicYearRepository;
+import com.harish.student_management.repository.SchoolRepository;
+
+import com.harish.student_management.entity.School;
+import com.harish.student_management.repository.SchoolRepository;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,97 +25,103 @@ public class AcademicYearServiceImpl implements AcademicYearService {
     private static final Logger logger = LoggerFactory.getLogger(AcademicYearServiceImpl.class);
 
     private final AcademicYearRepository academicYearRepository;
-
-    @Override
-    public AcademicYearResponseDto createAcademicYear(AcademicYearRequestDto request) {
-        logger.info("Creating academic year with name: {}", request.getName());
-
-        if (academicYearRepository.existsByName(request.getName())) {
-            throw new IllegalArgumentException("Academic year already exists with name: " + request.getName());
-        }
-
-        if (Boolean.TRUE.equals(request.getCurrent())) {
-            academicYearRepository.findByCurrentTrue().ifPresent(currentYear -> {
-                currentYear.setCurrent(false);
-                academicYearRepository.save(currentYear);
-            });
-        }
-
-        AcademicYear academicYear = AcademicYear.builder()
-                .name(request.getName())
-                .startDate(request.getStartDate())
-                .endDate(request.getEndDate())
-                .current(request.getCurrent() != null ? request.getCurrent() : false)
-                .description(request.getDescription())
-                .build();
-
-        AcademicYear savedAcademicYear = academicYearRepository.save(academicYear);
-        logger.info("Academic year created successfully with ID: {}", savedAcademicYear.getId());
-
-        return mapToResponseDto(savedAcademicYear);
-    }
+    private final CurrentSchoolService currentSchoolService;
+    private final SchoolRepository schoolRepository;
 
     @Override
     public AcademicYearResponseDto getAcademicYearById(Long id) {
-        logger.info("Fetching academic year with ID: {}", id);
-        AcademicYear academicYear = academicYearRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Academic year not found with id: " + id));
-        return mapToResponseDto(academicYear);
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        AcademicYear year = academicYearRepository
+                .findByIdAndSchool_Id(id, schoolId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Academic year not found"));
+
+        return mapToResponseDto(year);
     }
 
     @Override
     public List<AcademicYearResponseDto> getAllAcademicYears() {
-        logger.info("Fetching all academic years");
-        return academicYearRepository.findAll().stream()
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        return academicYearRepository.findAllBySchool_Id(schoolId)
+                .stream()
                 .map(this::mapToResponseDto)
                 .toList();
     }
 
     @Override
     public Optional<AcademicYearResponseDto> getCurrentAcademicYear() {
-        logger.info("Fetching current academic year");
-        return academicYearRepository.findByCurrentTrue()
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        return academicYearRepository
+                .findBySchool_IdAndCurrentTrue(schoolId)
                 .map(this::mapToResponseDto);
     }
 
+
+
     @Override
-    public AcademicYearResponseDto updateAcademicYear(Long id, AcademicYearRequestDto request) {
-        logger.info("Updating academic year with ID: {}", id);
-        AcademicYear academicYear = academicYearRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Academic year not found with id: " + id));
+    @Transactional
+    public AcademicYearResponseDto updateAcademicYear(
+            Long id, AcademicYearRequestDto request) {
 
-        if (!academicYear.getName().equals(request.getName()) && academicYearRepository.existsByName(request.getName())) {
-            throw new IllegalArgumentException("Academic year already exists with name: " + request.getName());
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        AcademicYear academicYear = academicYearRepository
+                .findByIdAndSchool_Id(id, schoolId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Academic year not found"));
+
+        String name = request.getName().trim();
+
+        if (!academicYear.getName().equalsIgnoreCase(name)
+                && academicYearRepository
+                .existsBySchool_IdAndNameIgnoreCase(
+                        schoolId, name)) {
+            throw new IllegalArgumentException(
+                    "Academic year already exists in this school");
         }
 
-        if (Boolean.TRUE.equals(request.getCurrent())) {
-            academicYearRepository.findByCurrentTrue().ifPresent(currentYear -> {
-                if (!currentYear.getId().equals(id)) {
-                    currentYear.setCurrent(false);
-                    academicYearRepository.save(currentYear);
-                }
-            });
+        boolean makeCurrent =
+                Boolean.TRUE.equals(request.getCurrent());
+
+        if (makeCurrent) {
+            academicYearRepository
+                    .findBySchool_IdAndCurrentTrue(schoolId)
+                    .filter(existing ->
+                            !existing.getId().equals(id))
+                    .ifPresent(existing -> {
+                        existing.setCurrent(false);
+                        academicYearRepository.save(existing);
+                    });
         }
 
-        academicYear.setName(request.getName());
+        academicYear.setName(name);
         academicYear.setStartDate(request.getStartDate());
         academicYear.setEndDate(request.getEndDate());
-        academicYear.setCurrent(request.getCurrent() != null ? request.getCurrent() : false);
+        academicYear.setCurrent(makeCurrent);
         academicYear.setDescription(request.getDescription());
 
-        AcademicYear updatedAcademicYear = academicYearRepository.save(academicYear);
-        logger.info("Academic year updated successfully with ID: {}", updatedAcademicYear.getId());
-
-        return mapToResponseDto(updatedAcademicYear);
+        return mapToResponseDto(
+                academicYearRepository.save(academicYear));
     }
 
+
     @Override
+    @Transactional
     public void deleteAcademicYear(Long id) {
-        logger.info("Deleting academic year with ID: {}", id);
-        AcademicYear academicYear = academicYearRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Academic year not found with id: " + id));
+
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        AcademicYear academicYear = academicYearRepository
+                .findByIdAndSchool_Id(id, schoolId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Academic year not found"));
+
         academicYearRepository.delete(academicYear);
-        logger.info("Academic year deleted successfully with ID: {}", id);
     }
 
     private AcademicYearResponseDto mapToResponseDto(AcademicYear academicYear) {
@@ -125,4 +136,78 @@ public class AcademicYearServiceImpl implements AcademicYearService {
                 .updatedAt(academicYear.getUpdatedAt())
                 .build();
     }
+
+
+    @Override
+    public AcademicYearResponseDto createAcademicYear(
+            AcademicYearRequestDto request) {
+
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        if (academicYearRepository
+                .existsBySchool_IdAndNameIgnoreCase(
+                        schoolId, request.getName().trim())) {
+            throw new IllegalArgumentException(
+                    "Academic year already exists in this school"
+            );
+        }
+
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("School not found"));
+
+        boolean makeCurrent = Boolean.TRUE.equals(request.getCurrent());
+
+        if (makeCurrent) {
+            academicYearRepository
+                    .findBySchool_IdAndCurrentTrue(schoolId)
+                    .ifPresent(existing -> {
+                        existing.setCurrent(false);
+                        academicYearRepository.save(existing);
+                    });
+        }
+
+        AcademicYear academicYear = AcademicYear.builder()
+                .school(school)
+                .name(request.getName().trim())
+                .startDate(request.getStartDate())
+                .endDate(request.getEndDate())
+                .current(makeCurrent)
+                .description(request.getDescription())
+                .build();
+
+        return mapToResponseDto(
+                academicYearRepository.save(academicYear));
+    }
+
+
+    @Override
+    @Transactional
+    public AcademicYearResponseDto setAcademicYearCurrent(
+            Long id, boolean current) {
+
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        AcademicYear target = academicYearRepository
+                .findByIdAndSchool_Id(id, schoolId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Academic year not found"));
+
+        if (current) {
+            academicYearRepository
+                    .findBySchool_IdAndCurrentTrue(schoolId)
+                    .filter(existing ->
+                            !existing.getId().equals(target.getId()))
+                    .ifPresent(existing -> {
+                        existing.setCurrent(false);
+                        academicYearRepository.save(existing);
+                    });
+        }
+
+        target.setCurrent(current);
+
+        return mapToResponseDto(academicYearRepository.save(target));
+    }
+
+
 }

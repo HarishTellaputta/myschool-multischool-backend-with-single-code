@@ -32,6 +32,7 @@ public class StudentResponseDto {
     private String admissionNo;
     private String rollNumber;
     private String name;
+    private String surname;
     private String email;
     private String phone;
     private LocalDate dateOfBirth;

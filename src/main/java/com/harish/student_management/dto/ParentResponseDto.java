@@ -16,6 +16,7 @@ public class ParentResponseDto {
 
     private Long id;
     private String fatherName;
+    private String surname;
     private String motherName;
     private String guardianName;
     private String contactPhone;

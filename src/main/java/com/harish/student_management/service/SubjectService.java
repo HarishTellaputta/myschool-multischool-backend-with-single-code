@@ -1,6 +1,5 @@
 package com.harish.student_management.service;
 
-
 import com.harish.student_management.dto.SubjectImportResponseDto;
 import com.harish.student_management.dto.SubjectRequest;
 import com.harish.student_management.dto.SubjectResponse;
@@ -24,10 +23,9 @@ public interface SubjectService {
     SubjectResponse updateSubject(Long id, SubjectRequest request);
 
     void deleteSubject(Long id);
+
     List<SubjectResponse> getSubjectsByClass(Long classId);
 
     SubjectImportResponseDto importSubjects(
-            MultipartFile file,
-            Long schoolId
-    ) throws IOException;
+            MultipartFile file, Long schoolId) throws IOException;
 }

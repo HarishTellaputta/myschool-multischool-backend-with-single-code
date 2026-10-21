@@ -17,8 +17,15 @@ public class ReportCardController {
 
     @GetMapping("/{studentId}/{examinationId}")
     @PreAuthorize("hasAnyRole('SCHOOL_ADMIN','TEACHER','PARENT','STUDENT')")
-    public ReportCardDto view(@PathVariable Long studentId, @PathVariable Long examinationId, Authentication a) {
-        return reportCardService.generate(studentId, examinationId, isAdmin(a));
+    public ReportCardDto view(
+            @PathVariable Long studentId,
+            @PathVariable Long examinationId) {
+
+        return reportCardService.generate(
+                studentId,
+                examinationId,
+                false
+        );
     }
 
     @GetMapping("/{studentId}/{examinationId}/download")

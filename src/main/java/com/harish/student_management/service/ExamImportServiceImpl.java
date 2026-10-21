@@ -44,6 +44,7 @@ public class ExamImportServiceImpl implements ExamImportService {
     private final TeacherAccessService teacherAccessService;
 
     private final GradeRuleRepository gradeRuleRepository;
+    private final CurrentSchoolService currentSchoolService;
 
 
     // =========================================================
@@ -129,16 +130,21 @@ public class ExamImportServiceImpl implements ExamImportService {
                     // Academic Year
                     // -------------------------------------------------
 
+
+                    Long schoolId = currentSchoolService.getCurrentSchoolId();
+
                     AcademicYear academicYear =
                             academicYearRepository
-                                    .findByNameIgnoreCase(
+                                    .findBySchool_IdAndNameIgnoreCase(
+                                            schoolId,
                                             academicYearName.trim()
                                     )
                                     .orElseThrow(() ->
                                             new IllegalArgumentException(
-                                                    "Academic Year not found: "
+                                                    "Academic Year not found in current school: "
                                                             + academicYearName
                                             ));
+
 
 
                     // -------------------------------------------------
@@ -151,8 +157,9 @@ public class ExamImportServiceImpl implements ExamImportService {
 
                     Examination examination =
                             examinationRepository
-                                    .findByAcademicYearIdAndNameIgnoreCase(
+                                    .findByAcademicYear_IdAndAcademicYear_School_IdAndNameIgnoreCase(
                                             academicYear.getId(),
+                                            schoolId,
                                             name.trim()
                                     )
                                     .orElse(null);
@@ -257,6 +264,7 @@ public class ExamImportServiceImpl implements ExamImportService {
         int created = 0;
         int updated = 0;
         int errorCount = 0;
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
         List<String> errors = new ArrayList<>();
 
@@ -519,7 +527,8 @@ public class ExamImportServiceImpl implements ExamImportService {
 
                     Examination examination =
                             examinationRepository
-                                    .findByNameIgnoreCase(
+                                    .findByAcademicYear_School_IdAndNameIgnoreCase(
+                                            schoolId,
                                             examinationName.trim()
                                     )
                                     .orElseThrow(() ->
@@ -1018,6 +1027,7 @@ public class ExamImportServiceImpl implements ExamImportService {
         int created = 0;
         int updated = 0;
         int errorCount = 0;
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
         List<ExamResultImportErrorDto> errors = new ArrayList<>();
 
@@ -1483,7 +1493,8 @@ public class ExamImportServiceImpl implements ExamImportService {
 
                     Examination examination =
                             examinationRepository
-                                    .findByNameIgnoreCase(
+                                    .findByAcademicYear_School_IdAndNameIgnoreCase(
+                                            schoolId,
                                             examinationName.trim()
                                     )
                                     .orElseThrow(() ->
@@ -2087,10 +2098,11 @@ public class ExamImportServiceImpl implements ExamImportService {
         if (percentage == null) {
             return null;
         }
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
         List<GradeRule> rules =
                 gradeRuleRepository
-                        .findAllByOrderByMinimumPercentageDesc();
+                        .findAllBySchool_IdOrderByMinimumPercentageDesc(schoolId);
 
         for (GradeRule rule : rules) {
 

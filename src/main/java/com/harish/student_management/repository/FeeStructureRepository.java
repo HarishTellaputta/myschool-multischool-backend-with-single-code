@@ -12,4 +12,22 @@ public interface FeeStructureRepository extends JpaRepository<FeeStructure, Long
             Long classId,
             Long academicYearId
     );
+
+    List<FeeStructure> findAllByClassEntity_School_Id(Long schoolId);
+
+    List<FeeStructure> findAllByClassEntity_School_IdAndClassEntity_Id(
+            Long schoolId, Long classId);
+
+    Optional<FeeStructure> findByIdAndClassEntity_School_Id(
+            Long id, Long schoolId);
+
+    boolean existsByNameIgnoreCaseAndClassEntity_IdAndAcademicYear_Id(
+            String name, Long classId, Long academicYearId);
+
+
+
+    boolean existsByNameIgnoreCaseAndClassEntity_IdAndAcademicYearIsNull(
+            String name,
+            Long classId
+    );
 }

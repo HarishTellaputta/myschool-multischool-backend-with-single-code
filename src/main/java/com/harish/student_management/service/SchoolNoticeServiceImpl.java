@@ -18,49 +18,72 @@ public class SchoolNoticeServiceImpl implements SchoolNoticeService {
     private final SchoolNoticeRepository repo;
     private final ClassRepository classes;
     private final SectionRepository sections;
+    private final CurrentSchoolService currentSchoolService;
 
+    @Override
     public SchoolNoticeResponseDto create(SchoolNoticeRequestDto r) {
         SchoolNotice notice = new SchoolNotice();
 
-        if (r.getStatus() == null || r.getStatus().isBlank()) {
-            notice.setStatus("DRAFT");
-        }
+        notice.setSchool(currentSchoolService.getCurrentSchool());
+        notice.setStatus(
+                r.getStatus() == null || r.getStatus().isBlank()
+                        ? "DRAFT"
+                        : r.getStatus().trim().toUpperCase()
+        );
 
         return map(repo.save(apply(notice, r)));
     }
 
-    public SchoolNoticeResponseDto update(Long id, SchoolNoticeRequestDto r) {
+    @Override
+    public SchoolNoticeResponseDto update(
+            Long id,
+            SchoolNoticeRequestDto r) {
+
         SchoolNotice n = find(id);
 
-        boolean wasPublished = "PUBLISHED".equalsIgnoreCase(n.getStatus());
+        boolean wasPublished =
+                "PUBLISHED".equalsIgnoreCase(n.getStatus());
+
         LocalDateTime publishedAt = n.getPublishedAt();
 
         apply(n, r);
 
-        // Published notice can also be edited.
-        // Keep it published after editing.
+        // Keep an already-published notice published after editing.
         if (wasPublished) {
             n.setStatus("PUBLISHED");
 
-            if (publishedAt != null) {
-                n.setPublishedAt(publishedAt);
-            } else {
+            if (publishedAt == null) {
                 n.setPublishedAt(LocalDateTime.now());
+            } else {
+                n.setPublishedAt(publishedAt);
             }
         }
 
-        return map(n);
+        return map(repo.save(n));
     }
 
+    @Override
     public void delete(Long id) {
-        repo.delete(find(id));
+        SchoolNotice notice = find(id);
+        repo.delete(notice);
     }
 
+    @Override
     public SchoolNoticeResponseDto publish(Long id, boolean publish) {
         SchoolNotice n = find(id);
-        n.setStatus(publish ? "PUBLISHED" : "DRAFT");
-        n.setPublishedAt(publish ? LocalDateTime.now() : null);
-        return map(n);
+
+        if (publish) {
+            n.setStatus("PUBLISHED");
+
+            if (n.getPublishedAt() == null) {
+                n.setPublishedAt(LocalDateTime.now());
+            }
+        } else {
+            n.setStatus("DRAFT");
+            n.setPublishedAt(null);
+        }
+
+        return map(repo.save(n));
     }
 
     @Override
@@ -68,23 +91,36 @@ public class SchoolNoticeServiceImpl implements SchoolNoticeService {
     public List<SchoolNoticeResponseDto> relevant(
             String role,
             Long classId,
-            Long sectionId
-    ) {
+            Long sectionId) {
+
         String userRole = role == null
                 ? ""
-                : role.trim().toUpperCase();
+                : role.trim().toUpperCase(Locale.ROOT);
+
+        Set<String> allowedRoles = Set.of(
+                "SCHOOL_ADMIN", "PARENT", "TEACHER", "STUDENT"
+        );
+
+        if (!allowedRoles.contains(userRole)) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Invalid role for notice access"
+            );
+        }
+
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
         List<SchoolNotice> notices =
-                repo.findByStatusOrderByPublishedAtDescIdDesc("PUBLISHED");
+                repo.findBySchool_IdAndStatusOrderByPublishedAtDescIdDesc(
+                        schoolId,
+                        "PUBLISHED"
+                );
 
-        // School Admin → all published notices
         if ("SCHOOL_ADMIN".equals(userRole)) {
             return notices.stream()
                     .map(this::map)
                     .toList();
         }
 
-        // Parent / Teacher / Student → school-wide published notices
         return notices.stream()
                 .filter(n -> isAudienceMatch(n, userRole))
                 .filter(n -> isClassMatch(n, classId))
@@ -93,8 +129,19 @@ public class SchoolNoticeServiceImpl implements SchoolNoticeService {
                 .toList();
     }
 
-    private SchoolNotice apply(SchoolNotice n, SchoolNoticeRequestDto r) {
-        Set<String> a = Set.of(
+    private SchoolNotice apply(
+            SchoolNotice n,
+            SchoolNoticeRequestDto r) {
+
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        if (r.getAudience() == null || r.getAudience().isBlank()) {
+            throw new IllegalArgumentException("Audience is required");
+        }
+
+        String audience = r.getAudience().trim().toUpperCase(Locale.ROOT);
+
+        Set<String> allowedAudiences = Set.of(
                 "ALL_PARENTS",
                 "CLASS",
                 "SECTION",
@@ -103,10 +150,72 @@ public class SchoolNoticeServiceImpl implements SchoolNoticeService {
                 "STUDENTS_AND_PARENTS",
                 "ALL"
         );
-        String audience = r.getAudience().toUpperCase();
-        if (!a.contains(audience)) throw new IllegalArgumentException("Unsupported notice audience");
-        if (("CLASS".equals(audience) || "SECTION".equals(audience)) && r.getClassId() == null)
-            throw new IllegalArgumentException("Class is required for targeted notice");
+
+        if (!allowedAudiences.contains(audience)) {
+            throw new IllegalArgumentException("Unsupported notice audience");
+        }
+
+        if (("CLASS".equals(audience) || "SECTION".equals(audience))
+                && r.getClassId() == null) {
+            throw new IllegalArgumentException(
+                    "Class is required for targeted notice"
+            );
+        }
+
+        if ("SECTION".equals(audience) && r.getSectionId() == null) {
+            throw new IllegalArgumentException(
+                    "Section is required for section-targeted notice"
+            );
+        }
+
+        if (r.getStatus() != null && !r.getStatus().isBlank()) {
+            String status = r.getStatus().trim().toUpperCase(Locale.ROOT);
+
+            if (!Set.of("DRAFT", "PUBLISHED").contains(status)) {
+                throw new IllegalArgumentException("Invalid notice status");
+            }
+
+            n.setStatus(status);
+        }
+
+        ClassEntity classEntity = null;
+
+        if (r.getClassId() != null) {
+            classEntity = classes.findById(r.getClassId())
+                    .orElseThrow(() ->
+                            new ResourceNotFoundException("Class not found")
+                    );
+
+            if (classEntity.getSchool() == null
+                    || !schoolId.equals(classEntity.getSchool().getId())) {
+                throw new ResourceNotFoundException("Class not found");
+            }
+        }
+
+        Section section = null;
+
+        if (r.getSectionId() != null) {
+            section = sections.findById(r.getSectionId())
+                    .orElseThrow(() ->
+                            new ResourceNotFoundException("Section not found")
+                    );
+
+            if (section.getClassEntity() == null
+                    || section.getClassEntity().getSchool() == null
+                    || !schoolId.equals(
+                    section.getClassEntity().getSchool().getId())) {
+                throw new ResourceNotFoundException("Section not found");
+            }
+
+            if (classEntity == null
+                    || !section.getClassEntity().getId()
+                    .equals(classEntity.getId())) {
+                throw new IllegalArgumentException(
+                        "Section does not belong to class"
+                );
+            }
+        }
+
         n.setTitle(r.getTitle());
         n.setContent(r.getContent());
         n.setCategory(
@@ -115,19 +224,31 @@ public class SchoolNoticeServiceImpl implements SchoolNoticeService {
                         : r.getCategory().trim()
         );
         n.setAudience(audience);
-        if (r.getStatus() != null && !r.getStatus().isBlank()) {
-            n.setStatus(r.getStatus().toUpperCase());
+        n.setClassEntity(classEntity);
+        n.setSection(section);
+
+        if (n.getStatus() == null || n.getStatus().isBlank()) {
+            n.setStatus("DRAFT");
         }
-        n.setClassEntity(r.getClassId() == null ? null : classes.findById(r.getClassId()).orElseThrow(() -> new ResourceNotFoundException("Class not found")));
-        n.setSection(r.getSectionId() == null ? null : sections.findById(r.getSectionId()).orElseThrow(() -> new ResourceNotFoundException("Section not found")));
-        if (n.getSection() != null && (n.getClassEntity() == null || !n.getSection().getClassEntity().getId().equals(n.getClassEntity().getId())))
-            throw new IllegalArgumentException("Section does not belong to class");
-        if ("PUBLISHED".equals(n.getStatus()) && n.getPublishedAt() == null) n.setPublishedAt(LocalDateTime.now());
+
+        if ("PUBLISHED".equals(n.getStatus())) {
+            if (n.getPublishedAt() == null) {
+                n.setPublishedAt(LocalDateTime.now());
+            }
+        } else {
+            n.setPublishedAt(null);
+        }
+
         return n;
     }
 
     private SchoolNotice find(Long id) {
-        return repo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Notice not found: " + id));
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        return repo.findByIdAndSchool_Id(id, schoolId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("Notice not found")
+                );
     }
 
     private SchoolNoticeResponseDto map(SchoolNotice n) {
@@ -137,68 +258,94 @@ public class SchoolNoticeServiceImpl implements SchoolNoticeService {
                 .content(n.getContent())
                 .audience(n.getAudience())
                 .category(n.getCategory())
-                .status(n.getStatus()).classId(n.getClassEntity() == null ? null : n.getClassEntity().getId()).className(n.getClassEntity() == null ? null : n.getClassEntity().getName()).sectionId(n.getSection() == null ? null : n.getSection().getId()).sectionName(n.getSection() == null ? null : n.getSection().getName()).publishedAt(n.getPublishedAt()).createdAt(n.getCreatedAt()).build();
-
+                .status(n.getStatus())
+                .classId(
+                        n.getClassEntity() == null
+                                ? null
+                                : n.getClassEntity().getId()
+                )
+                .className(
+                        n.getClassEntity() == null
+                                ? null
+                                : n.getClassEntity().getName()
+                )
+                .sectionId(
+                        n.getSection() == null
+                                ? null
+                                : n.getSection().getId()
+                )
+                .sectionName(
+                        n.getSection() == null
+                                ? null
+                                : n.getSection().getName()
+                )
+                .publishedAt(n.getPublishedAt())
+                .createdAt(n.getCreatedAt())
+                .build();
     }
 
-    private boolean isAudienceMatch(SchoolNotice notice, String role) {
-        String audience = notice.getAudience();
+    private boolean isAudienceMatch(
+            SchoolNotice notice,
+            String role) {
 
-        if (audience == null) {
+        if (notice.getAudience() == null || role == null) {
             return false;
         }
 
-        return switch (audience.toUpperCase()) {
+        String audience = notice.getAudience()
+                .trim()
+                .toUpperCase(Locale.ROOT);
 
-            case "ALL_PARENTS" ->
-                    "PARENT".equals(role);
+        String userRole = role.trim()
+                .toUpperCase(Locale.ROOT);
 
-            case "STUDENTS" ->
-                    "STUDENT".equals(role);
+        return switch (audience) {
+            case "ALL_PARENTS" -> "PARENT".equals(userRole);
 
-            case "STUDENTS_AND_PARENTS" ->
-                    "STUDENT".equals(role)
-                            || "PARENT".equals(role);
+            case "STUDENTS" -> "STUDENT".equals(userRole);
 
-            case "TEACHERS" ->
-                    "TEACHER".equals(role);
+            case "STUDENTS_AND_PARENTS" -> "STUDENT".equals(userRole)
+                    || "PARENT".equals(userRole);
 
-            case "ALL" ->
-                    "STUDENT".equals(role)
-                            || "PARENT".equals(role)
-                            || "TEACHER".equals(role);
+            case "TEACHERS" -> "TEACHER".equals(userRole);
 
-            case "CLASS", "SECTION" ->
-                    "STUDENT".equals(role)
-                            || "PARENT".equals(role);
+            case "ALL" -> "STUDENT".equals(userRole)
+                    || "PARENT".equals(userRole)
+                    || "TEACHER".equals(userRole);
 
-            default ->
-                    false;
+            case "CLASS", "SECTION" -> "STUDENT".equals(userRole)
+                    || "PARENT".equals(userRole);
+
+            default -> false;
         };
     }
- private boolean isClassMatch(
-         SchoolNotice notice,
-         Long classId
- ) {
-  if (!"CLASS".equalsIgnoreCase(notice.getAudience())
-          && !"SECTION".equalsIgnoreCase(notice.getAudience())) {
-   return true;
-  }
 
-  return classId != null
-          && notice.getClassEntity() != null
-          && notice.getClassEntity().getId().equals(classId);
- }
- private boolean isSectionMatch(
-         SchoolNotice notice,
-         Long sectionId
- ) {
-  if (!"SECTION".equalsIgnoreCase(notice.getAudience())) {
-   return true;
-  }
+    private boolean isClassMatch(
+            SchoolNotice notice,
+            Long classId) {
 
-  return sectionId != null
-          && notice.getSection() != null
-          && notice.getSection().getId().equals(sectionId);
- }
+        String audience = notice.getAudience();
+
+        if (!"CLASS".equalsIgnoreCase(audience)
+                && !"SECTION".equalsIgnoreCase(audience)) {
+            return true;
+        }
+
+        return classId != null
+                && notice.getClassEntity() != null
+                && classId.equals(notice.getClassEntity().getId());
+    }
+
+    private boolean isSectionMatch(
+            SchoolNotice notice,
+            Long sectionId) {
+
+        if (!"SECTION".equalsIgnoreCase(notice.getAudience())) {
+            return true;
+        }
+
+        return sectionId != null
+                && notice.getSection() != null
+                && sectionId.equals(notice.getSection().getId());
+    }
 }

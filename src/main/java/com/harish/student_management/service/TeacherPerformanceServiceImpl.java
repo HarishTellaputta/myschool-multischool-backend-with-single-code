@@ -1,3 +1,4 @@
+
 package com.harish.student_management.service;
 
 import com.harish.student_management.dto.SubjectPerformanceResponseDto;
@@ -29,45 +30,49 @@ public class TeacherPerformanceServiceImpl
     private final ExamScheduleRepository examScheduleRepository;
     private final ExamResultRepository examResultRepository;
     private final StudentRepository studentRepository;
+    private final CurrentSchoolService currentSchoolService;
 
     // =========================================================
-    // ADMIN
-    // SELECTED TEACHER PERFORMANCE
+    // ADMIN: SELECTED TEACHER PERFORMANCE
     // =========================================================
 
     @Override
     public List<TeacherPerformanceResponseDto> getTeacherPerformance(
             Long teacherId) {
 
-        teacherRepository.findById(teacherId)
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        Teacher teacher = teacherRepository
+                .findByIdAndSchoolId(teacherId, schoolId)
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
-                                "Teacher not found with id: " + teacherId
+                                "Teacher not found in current school: "
+                                        + teacherId
                         )
                 );
 
-        return buildTeacherPerformance(teacherId);
+        return buildTeacherPerformance(teacher.getId(), schoolId);
     }
 
     // =========================================================
-    // TEACHER
-    // LOGGED-IN TEACHER PERFORMANCE
+    // TEACHER: LOGGED-IN TEACHER PERFORMANCE
     // =========================================================
 
     @Override
     public List<TeacherPerformanceResponseDto> getMyPerformance(
             String username) {
 
-        Teacher teacher =
-                teacherRepository.findByUser_Username(username)
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "Teacher not found for username: "
-                                                + username
-                                )
-                        );
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
-        return buildTeacherPerformance(teacher.getId());
+        Teacher teacher = teacherRepository
+                .findByUsernameAndSchoolId(username, schoolId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Teacher not found in current school"
+                        )
+                );
+
+        return buildTeacherPerformance(teacher.getId(), schoolId);
     }
 
     // =========================================================
@@ -75,180 +80,92 @@ public class TeacherPerformanceServiceImpl
     // =========================================================
 
     private List<TeacherPerformanceResponseDto> buildTeacherPerformance(
-            Long teacherId) {
+            Long teacherId,
+            Long schoolId) {
 
+        // Assignment service already validates the current school.
         List<TeacherClassAssignmentResponseDto> assignments =
-                assignmentService.getAssignmentsByTeacherId(
-                        teacherId
-                );
+                assignmentService.getAssignmentsByTeacherId(teacherId);
 
         List<TeacherPerformanceResponseDto> response =
                 new ArrayList<>();
 
-        for (TeacherClassAssignmentResponseDto assignment
-                : assignments) {
+        for (TeacherClassAssignmentResponseDto assignment : assignments) {
 
             Long classId = assignment.getClassId();
             Long sectionId = assignment.getSectionId();
             Long subjectId = assignment.getSubjectId();
 
-            // =====================================================
-            // FIND LATEST EXAM FOR EXACT
-            // CLASS + SECTION + SUBJECT
-            // =====================================================
-
+            // Only schedules belonging to this school and the exact
+            // class + section + subject are returned.
             List<ExamSchedule> schedules =
                     examScheduleRepository
-                            .findByClassSectionSubjectOrderByLatest(
+                            .findPerformanceSchedulesByClassSectionSubjectAndSchool(
                                     classId,
                                     sectionId,
-                                    subjectId
+                                    subjectId,
+                                    schoolId
                             );
 
             if (schedules.isEmpty()) {
                 continue;
             }
 
-            ExamSchedule latestSchedule =
-                    schedules.get(0);
+            ExamSchedule latestSchedule = schedules.get(0);
 
-            // =====================================================
-            // STUDENT COUNT
-            // =====================================================
+            // School-scoped student count.
+            long studentCount = getStudentCount(
+                    classId,
+                    sectionId,
+                    schoolId
+            );
 
-            int studentCount;
-
-            if (sectionId != null) {
-
-                studentCount =
-                        studentRepository
-                                .findBySectionId(sectionId)
-                                .size();
-
-            } else {
-
-                studentCount =
-                        studentRepository
-                                .findBySection_ClassEntity_Id(
-                                        classId
-                                )
-                                .size();
-            }
-
-            // =====================================================
-            // EXAM RESULTS
-            // =====================================================
-
+            // Results are scoped to the schedule's school.
             List<ExamResult> results =
                     examResultRepository
-                            .findByExamScheduleId(
-                                    latestSchedule.getId()
+                            .findPerformanceResultsByScheduleAndSchool(
+                                    latestSchedule.getId(),
+                                    schoolId
                             );
 
-            List<ExamResult> assessedResults =
-                    results.stream()
-                            .filter(result ->
-                                    result.getMarksObtained() != null
-                            )
-                            .toList();
+            List<ExamResult> assessedResults = results.stream()
+                    .filter(result -> result.getMarksObtained() != null)
+                    .toList();
 
-            int assessedCount =
-                    assessedResults.size();
+            int assessedCount = assessedResults.size();
 
-            // =====================================================
-            // PERFORMANCE CALCULATION
-            // =====================================================
+            double averageMarks = calculateAverageMarks(assessedResults);
 
-            double averageMarks = 0.0;
-            double performancePercentage = 0.0;
+            Integer maxMarks = latestSchedule.getMaxMarks();
 
-            if (!assessedResults.isEmpty()) {
-
-                double totalMarks =
-                        assessedResults.stream()
-                                .mapToDouble(result ->
-                                        result.getMarksObtained()
-                                )
-                                .sum();
-
-                averageMarks =
-                        totalMarks / assessedResults.size();
-
-                if (latestSchedule.getMaxMarks() != null
-                        && latestSchedule.getMaxMarks() > 0) {
-
-                    performancePercentage =
-                            averageMarks
-                                    * 100.0
-                                    / latestSchedule.getMaxMarks();
-                }
-            }
-
-            // =====================================================
-            // RESPONSE
-            // =====================================================
+            double performancePercentage =
+                    calculatePerformancePercentage(
+                            averageMarks,
+                            maxMarks,
+                            assessedCount
+                    );
 
             response.add(
                     TeacherPerformanceResponseDto.builder()
-
                             .classId(classId)
-
-                            .className(
-                                    assignment.getClassName()
-                            )
-
+                            .className(assignment.getClassName())
                             .sectionId(sectionId)
-
-                            .sectionName(
-                                    assignment.getSectionName()
-                            )
-
+                            .sectionName(assignment.getSectionName())
                             .subjectId(subjectId)
-
-                            .subjectName(
-                                    assignment.getSubjectName()
-                            )
-
-                            .subjectCode(
-                                    assignment.getSubjectCode()
-                            )
-
-                            .latestExamScheduleId(
-                                    latestSchedule.getId()
-                            )
-
+                            .subjectName(assignment.getSubjectName())
+                            .subjectCode(assignment.getSubjectCode())
+                            .latestExamScheduleId(latestSchedule.getId())
                             .latestExamName(
-                                    latestSchedule
-                                            .getExamination()
-                                            .getName()
+                                    latestSchedule.getExamination().getName()
                             )
-
-                            .examDate(
-                                    latestSchedule.getExamDate()
-                            )
-
-                            .studentCount(
-                                    studentCount
-                            )
-
-                            .assessedCount(
-                                    assessedCount
-                            )
-
-                            .averageMarks(
-                                    round(averageMarks)
-                            )
-
-                            .maxMarks(
-                                    latestSchedule.getMaxMarks()
-                            )
-
+                            .examDate(latestSchedule.getExamDate())
+                            .studentCount(toIntCount(studentCount))
+                            .assessedCount(assessedCount)
+                            .averageMarks(round(averageMarks))
+                            .maxMarks(maxMarks == null ? 0 : maxMarks)
                             .performancePercentage(
-                                    round(
-                                            performancePercentage
-                                    )
+                                    round(performancePercentage)
                             )
-
                             .build()
             );
         }
@@ -257,40 +174,42 @@ public class TeacherPerformanceServiceImpl
     }
 
     // =========================================================
-    // ADMIN
-    // SUBJECT PERFORMANCE HISTORY
+    // ADMIN: SUBJECT PERFORMANCE HISTORY
     // =========================================================
 
     @Override
     public List<SubjectPerformanceResponseDto> getSubjectPerformance(
             Long subjectId) {
 
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
         List<ExamSchedule> schedules =
                 examScheduleRepository
-                        .findBySubjectIdOrderByExamDateDescIdDesc(
-                                subjectId
+                        .findPerformanceSchedulesBySubjectAndSchool(
+                                subjectId,
+                                schoolId
                         );
 
-        return buildSubjectPerformance(schedules, subjectId);
+        return buildSubjectPerformance(schedules, schoolId);
     }
 
     // =========================================================
-    // TEACHER
-    // OWN SUBJECT PERFORMANCE HISTORY
+    // TEACHER: OWN SUBJECT PERFORMANCE HISTORY
     // =========================================================
 
     @Override
-    public List<SubjectPerformanceResponseDto>
-    getMySubjectPerformance(String username) {
+    public List<SubjectPerformanceResponseDto> getMySubjectPerformance(
+            String username) {
 
-        Teacher teacher =
-                teacherRepository.findByUser_Username(username)
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "Teacher not found for username: "
-                                                + username
-                                )
-                        );
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        Teacher teacher = teacherRepository
+                .findByUsernameAndSchoolId(username, schoolId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Teacher not found in current school"
+                        )
+                );
 
         List<TeacherClassAssignmentResponseDto> assignments =
                 assignmentService.getAssignmentsByTeacherId(
@@ -300,26 +219,19 @@ public class TeacherPerformanceServiceImpl
         List<SubjectPerformanceResponseDto> response =
                 new ArrayList<>();
 
-        // =========================================================
-        // ONLY EXAMS BELONGING TO TEACHER ASSIGNMENTS
-        // =========================================================
-
-        for (TeacherClassAssignmentResponseDto assignment
-                : assignments) {
+        for (TeacherClassAssignmentResponseDto assignment : assignments) {
 
             List<ExamSchedule> schedules =
                     examScheduleRepository
-                            .findByClassSectionSubjectOrderByLatest(
+                            .findPerformanceSchedulesByClassSectionSubjectAndSchool(
                                     assignment.getClassId(),
                                     assignment.getSectionId(),
-                                    assignment.getSubjectId()
+                                    assignment.getSubjectId(),
+                                    schoolId
                             );
 
             response.addAll(
-                    buildSubjectPerformance(
-                            schedules,
-                            assignment.getSubjectId()
-                    )
+                    buildSubjectPerformance(schedules, schoolId)
             );
         }
 
@@ -327,174 +239,78 @@ public class TeacherPerformanceServiceImpl
     }
 
     // =========================================================
-    // BUILD SUBJECT PERFORMANCE
+    // BUILD SUBJECT PERFORMANCE HISTORY
     // =========================================================
 
-    private List<SubjectPerformanceResponseDto>
-    buildSubjectPerformance(
+    private List<SubjectPerformanceResponseDto> buildSubjectPerformance(
             List<ExamSchedule> schedules,
-            Long subjectId) {
+            Long schoolId) {
 
         List<SubjectPerformanceResponseDto> response =
                 new ArrayList<>();
 
         for (ExamSchedule schedule : schedules) {
 
-            Long classId =
-                    schedule.getClassEntity().getId();
-
-            String className =
-                    schedule.getClassEntity().getName();
+            Long classId = schedule.getClassEntity().getId();
+            String className = schedule.getClassEntity().getName();
 
             Long sectionId = null;
             String sectionName = "All Sections";
 
             if (schedule.getSection() != null) {
-
-                sectionId =
-                        schedule.getSection().getId();
-
-                sectionName =
-                        schedule.getSection().getName();
+                sectionId = schedule.getSection().getId();
+                sectionName = schedule.getSection().getName();
             }
 
-            // =====================================================
-            // STUDENT COUNT
-            // =====================================================
-
-            int studentCount;
-
-            if (sectionId != null) {
-
-                studentCount =
-                        studentRepository
-                                .findBySectionId(sectionId)
-                                .size();
-
-            } else {
-
-                studentCount =
-                        studentRepository
-                                .findBySection_ClassEntity_Id(
-                                        classId
-                                )
-                                .size();
-            }
-
-            // =====================================================
-            // RESULTS
-            // =====================================================
+            long studentCount = getStudentCount(
+                    classId,
+                    sectionId,
+                    schoolId
+            );
 
             List<ExamResult> results =
                     examResultRepository
-                            .findByExamScheduleId(
-                                    schedule.getId()
+                            .findPerformanceResultsByScheduleAndSchool(
+                                    schedule.getId(),
+                                    schoolId
                             );
 
-            List<ExamResult> assessedResults =
-                    results.stream()
-                            .filter(result ->
-                                    result.getMarksObtained() != null
-                            )
-                            .toList();
+            List<ExamResult> assessedResults = results.stream()
+                    .filter(result -> result.getMarksObtained() != null)
+                    .toList();
 
-            int assessedCount =
-                    assessedResults.size();
+            int assessedCount = assessedResults.size();
 
-            // =====================================================
-            // CALCULATE PERFORMANCE
-            // =====================================================
+            double averageMarks = calculateAverageMarks(assessedResults);
 
-            double averageMarks = 0.0;
-            double performancePercentage = 0.0;
+            Integer maxMarks = schedule.getMaxMarks();
 
-            if (!assessedResults.isEmpty()) {
-
-                double totalMarks =
-                        assessedResults.stream()
-                                .mapToDouble(result ->
-                                        result.getMarksObtained()
-                                )
-                                .sum();
-
-                averageMarks =
-                        totalMarks / assessedResults.size();
-
-                if (schedule.getMaxMarks() != null
-                        && schedule.getMaxMarks() > 0) {
-
-                    performancePercentage =
-                            averageMarks
-                                    * 100.0
-                                    / schedule.getMaxMarks();
-                }
-            }
-
-            // =====================================================
-            // RESPONSE
-            // =====================================================
+            double performancePercentage =
+                    calculatePerformancePercentage(
+                            averageMarks,
+                            maxMarks,
+                            assessedCount
+                    );
 
             response.add(
                     SubjectPerformanceResponseDto.builder()
-
                             .classId(classId)
-
                             .className(className)
-
                             .sectionId(sectionId)
-
                             .sectionName(sectionName)
-
-                            .subjectId(subjectId)
-
-                            .subjectName(
-                                    schedule
-                                            .getSubject()
-                                            .getName()
-                            )
-
-                            .subjectCode(
-                                    schedule
-                                            .getSubject()
-                                            .getCode()
-                            )
-
-                            .examScheduleId(
-                                    schedule.getId()
-                            )
-
-                            .examName(
-                                    schedule
-                                            .getExamination()
-                                            .getName()
-                            )
-
-                            .examDate(
-                                    schedule.getExamDate()
-                            )
-
-                            .studentCount(
-                                    studentCount
-                            )
-
-                            .assessedCount(
-                                    assessedCount
-                            )
-
-                            .averageMarks(
-                                    round(averageMarks)
-                            )
-
-                            .maxMarks(
-                                    schedule.getMaxMarks()
-                            )
-
+                            .subjectId(schedule.getSubject().getId())
+                            .subjectName(schedule.getSubject().getName())
+                            .subjectCode(schedule.getSubject().getCode())
+                            .examScheduleId(schedule.getId())
+                            .examName(schedule.getExamination().getName())
+                            .examDate(schedule.getExamDate())
+                            .studentCount(toIntCount(studentCount))
+                            .assessedCount(assessedCount)
+                            .averageMarks(round(averageMarks))
+                            .maxMarks(maxMarks)
                             .performancePercentage(
-                                    round(
-                                            performancePercentage
-                                    )
+                                    round(performancePercentage)
                             )
-
                             .build()
             );
         }
@@ -503,11 +319,66 @@ public class TeacherPerformanceServiceImpl
     }
 
     // =========================================================
-    // ROUND
+    // SCHOOL-SCOPED STUDENT COUNT
     // =========================================================
 
-    private double round(double value) {
+    private long getStudentCount(
+            Long classId,
+            Long sectionId,
+            Long schoolId) {
 
+        if (sectionId != null) {
+            return studentRepository
+                    .countPerformanceStudentsBySectionAndSchool(
+                            sectionId,
+                            schoolId
+                    );
+        }
+
+        return studentRepository
+                .countPerformanceStudentsByClassAndSchool(
+                        classId,
+                        schoolId
+                );
+    }
+
+    // =========================================================
+    // PERFORMANCE CALCULATIONS
+    // =========================================================
+
+    private double calculateAverageMarks(
+            List<ExamResult> assessedResults) {
+
+        if (assessedResults.isEmpty()) {
+            return 0.0;
+        }
+
+        double totalMarks = assessedResults.stream()
+                .mapToDouble(result -> result.getMarksObtained())
+                .sum();
+
+        return totalMarks / assessedResults.size();
+    }
+
+    private double calculatePerformancePercentage(
+            double averageMarks,
+            Integer maxMarks,
+            int assessedCount) {
+
+        if (assessedCount == 0 || maxMarks == null || maxMarks <= 0) {
+            return 0.0;
+        }
+
+        return averageMarks * 100.0 / maxMarks;
+    }
+
+    private int toIntCount(long count) {
+        return count > Integer.MAX_VALUE
+                ? Integer.MAX_VALUE
+                : (int) count;
+    }
+
+    private double round(double value) {
         return Math.round(value * 100.0) / 100.0;
     }
 }

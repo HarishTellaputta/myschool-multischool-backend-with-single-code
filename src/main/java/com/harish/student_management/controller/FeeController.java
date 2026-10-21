@@ -161,4 +161,17 @@ public class FeeController {
                 )
         );
     }
+
+
+    @PutMapping("/students/fees/{studentFeeId}/discount")
+    @PreAuthorize("hasRole('SCHOOL_ADMIN')")
+    public ResponseEntity<StudentFeeResponseDto> applyDiscount(
+            @PathVariable Long studentFeeId,
+            @Valid @RequestBody FeeDiscountRequestDto request) {
+
+        return ResponseEntity.ok(
+                service.applyDiscount(studentFeeId, request)
+        );
+    }
+
 }

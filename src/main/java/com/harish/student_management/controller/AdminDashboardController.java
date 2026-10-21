@@ -24,16 +24,16 @@ public class AdminDashboardController {
         return service.get();
     }
 
-    @PostMapping(
-            value = "/import-excel",
-            consumes = MediaType.MULTIPART_FORM_DATA_VALUE
-    )
-    @PreAuthorize("hasRole('SCHOOL_ADMIN')")
-    public ResponseEntity<String> importExcel(
-            @RequestParam("file") MultipartFile file) {
-
-        return ResponseEntity.ok(
-                excelImportService.importStudentsAndParents(file)
-        );
-    }
+//    @PostMapping(
+//            value = "/import-excel",
+//            consumes = MediaType.MULTIPART_FORM_DATA_VALUE
+//    )
+//    @PreAuthorize("hasRole('SCHOOL_ADMIN')")
+//    public ResponseEntity<String> importExcel(
+//            @RequestParam("file") MultipartFile file) {
+//
+//        return ResponseEntity.ok(
+//                excelImportService.importStudentsAndParents(file)
+//        );
+//    }
 }

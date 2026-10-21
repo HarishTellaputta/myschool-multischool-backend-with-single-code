@@ -3,7 +3,9 @@ package com.harish.student_management.service;
 import com.harish.student_management.dto.AcademicYearImportErrorDto;
 import com.harish.student_management.dto.AcademicYearImportResponseDto;
 import com.harish.student_management.entity.AcademicYear;
+import com.harish.student_management.entity.School;
 import com.harish.student_management.repository.AcademicYearRepository;
+import com.harish.student_management.repository.SchoolRepository;
 import lombok.RequiredArgsConstructor;
 import org.apache.poi.ss.usermodel.*;
 import org.springframework.stereotype.Service;
@@ -22,6 +24,8 @@ public class AcademicYearExcelImportServiceImpl
         implements AcademicYearExcelImportService {
 
     private final AcademicYearRepository academicYearRepository;
+    private final CurrentSchoolService currentSchoolService;
+    private final SchoolRepository schoolRepository;
 
     @Override
     public AcademicYearImportResponseDto importAcademicYearsExcel(
@@ -30,6 +34,11 @@ public class AcademicYearExcelImportServiceImpl
         int totalRows = 0;
         int created = 0;
         int updated = 0;
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() ->
+                        new IllegalStateException("School not found"));
 
         List<AcademicYearImportErrorDto> errors = new ArrayList<>();
 
@@ -103,61 +112,55 @@ public class AcademicYearExcelImportServiceImpl
                         current = false;
                     }
 
-                    // ==============================
-                    // FIND EXISTING
-                    // ==============================
+// FIND EXISTING — CURRENT SCHOOL ONLY
 
-                    AcademicYear academicYear =
-                            academicYearRepository
-                                    .findByNameIgnoreCase(name.trim())
-                                    .orElse(null);
+                    AcademicYear academicYear = academicYearRepository
+                            .findBySchool_IdAndNameIgnoreCase(
+                                    schoolId, name.trim())
+                            .orElse(null);
 
                     boolean isNew = academicYear == null;
 
                     if (isNew) {
-
                         academicYear = AcademicYear.builder()
+                                .school(school)
                                 .name(name.trim())
                                 .startDate(startDate)
                                 .endDate(endDate)
                                 .current(false)
                                 .description(description)
                                 .build();
-
                     } else {
-
                         academicYear.setName(name.trim());
                         academicYear.setStartDate(startDate);
                         academicYear.setEndDate(endDate);
                         academicYear.setDescription(description);
                     }
 
-                    // ==============================
-                    // CURRENT ACADEMIC YEAR
-                    // ==============================
+// CURRENT ACADEMIC YEAR — CURRENT SCHOOL ONLY
+
 
                     if (Boolean.TRUE.equals(current)) {
 
-                        Optional<AcademicYear> existingCurrent =
-                                academicYearRepository.findByCurrentTrue();
+                        Long academicYearId = academicYear.getId();
 
-                        if (existingCurrent.isPresent()) {
-
-                            AcademicYear currentYear =
-                                    existingCurrent.get();
-
-                            if (academicYear.getId() == null
-                                    || !currentYear.getId()
-                                    .equals(academicYear.getId())) {
-
-                                currentYear.setCurrent(false);
-
-                                academicYearRepository.save(currentYear);
-                            }
-                        }
+                        academicYearRepository
+                                .findBySchool_IdAndCurrentTrue(schoolId)
+                                .filter(existing ->
+                                        academicYearId == null
+                                                || !existing.getId().equals(academicYearId))
+                                .ifPresent(existing -> {
+                                    existing.setCurrent(false);
+                                    academicYearRepository.save(existing);
+                                });
                     }
 
-                    academicYear.setCurrent(current);
+                    academicYear.setCurrent(Boolean.TRUE.equals(current));
+
+                    academicYearRepository.save(academicYear);
+
+
+                    academicYear.setCurrent(Boolean.TRUE.equals(current));
 
                     academicYearRepository.save(academicYear);
 

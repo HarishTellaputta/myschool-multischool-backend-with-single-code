@@ -103,21 +103,16 @@ public class SectionController {
     // IMPORT SECTIONS FROM EXCEL
     // =========================================================
 
-    @Operation(summary = "Import sections from Excel")
-    @PreAuthorize("hasRole('SCHOOL_ADMIN')")
     @PostMapping(
             value = "/import",
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE
     )
+    @PreAuthorize("hasRole('SCHOOL_ADMIN')")
     public ResponseEntity<SectionImportResponseDto> importSections(
-            @RequestParam("file") MultipartFile file,
-            @RequestParam("schoolId") Long schoolId) throws IOException {
+            @RequestParam("file") MultipartFile file) throws IOException {
 
         SectionImportResponseDto response =
-                sectionService.importSections(
-                        file,
-                        schoolId
-                );
+                sectionService.importSections(file);
 
         return ResponseEntity.ok(response);
     }

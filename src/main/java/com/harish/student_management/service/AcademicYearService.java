@@ -19,4 +19,7 @@ public interface AcademicYearService {
     AcademicYearResponseDto updateAcademicYear(Long id, AcademicYearRequestDto request);
 
     void deleteAcademicYear(Long id);
+
+    AcademicYearResponseDto setAcademicYearCurrent(
+            Long id, boolean current);
 }

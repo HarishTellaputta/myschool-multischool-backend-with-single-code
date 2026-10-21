@@ -1,5 +1,5 @@
-package com.harish.student_management.service;
 
+package com.harish.student_management.service;
 
 import com.harish.student_management.dto.*;
 
@@ -9,6 +9,8 @@ public interface AuthService {
 
     LoginResponseDto login(LoginRequestDto request);
 
+    UserResponseDto assignRole(Long userId, String roleName);
+
     String forgotPassword(ForgotPasswordRequestDto request);
 
     String resetPassword(ResetPasswordRequestDto request);
@@ -16,5 +18,4 @@ public interface AuthService {
     String changePassword(ChangePasswordRequestDto request, String username);
 
     LogoutResponseDto logout(String token);
-
 }

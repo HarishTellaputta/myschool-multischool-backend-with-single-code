@@ -1,6 +1,6 @@
+
 package com.harish.student_management.service;
 
-import com.harish.student_management.dto.TeacherLeaveApprovalDto;
 import com.harish.student_management.dto.TeacherLeaveRequestDto;
 import com.harish.student_management.dto.TeacherLeaveResponseDto;
 import com.harish.student_management.entity.Teacher;
@@ -11,35 +11,54 @@ import com.harish.student_management.repository.TeacherRepository;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
+import java.time.DateTimeException;
+import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Transactional
 public class TeacherLeaveServiceImpl implements TeacherLeaveService {
 
-    private static final Logger logger = LoggerFactory.getLogger(TeacherLeaveServiceImpl.class);
+    private static final Logger logger =
+            LoggerFactory.getLogger(TeacherLeaveServiceImpl.class);
 
     private final TeacherLeaveRepository leaveRepository;
     private final TeacherRepository teacherRepository;
+    private final CurrentSchoolService currentSchoolService;
 
     @Override
-    public TeacherLeaveResponseDto applyForLeave(TeacherLeaveRequestDto request) {
-        logger.info("Applying for leave for teacher: {}", request.getTeacherId());
+    public TeacherLeaveResponseDto applyForLeave(
+            TeacherLeaveRequestDto request) {
 
-        Teacher teacher = teacherRepository.findById(request.getTeacherId())
-                .orElseThrow(() -> new ResourceNotFoundException("Teacher not found with id: " + request.getTeacherId()));
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+        Teacher teacher;
 
-        if (request.getEndDate().isBefore(request.getStartDate())) {
-            throw new IllegalArgumentException("End date must be after start date");
+        if (isSchoolAdmin()) {
+            teacher = teacherRepository
+                    .findByIdAndSchoolId(request.getTeacherId(), schoolId)
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "Teacher not found in your school"));
+        } else {
+            // Teachers can apply only for themselves.
+            teacher = getCurrentTeacher(schoolId);
         }
 
-        if (leaveRepository.existsByTeacherIdAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
-                request.getTeacherId(), request.getEndDate(), request.getStartDate())) {
-            throw new IllegalArgumentException("Teacher already has leave during this period");
-        }
+        validateDates(request.getStartDate(), request.getEndDate());
+
+        checkOverlap(
+                teacher.getId(),
+                request.getStartDate(),
+                request.getEndDate(),
+                null
+        );
 
         TeacherLeave leave = TeacherLeave.builder()
                 .teacher(teacher)
@@ -47,132 +66,300 @@ public class TeacherLeaveServiceImpl implements TeacherLeaveService {
                 .startDate(request.getStartDate())
                 .endDate(request.getEndDate())
                 .reason(request.getReason())
-                .status("PENDING")
+                .status("APPLIED")
                 .build();
 
-        TeacherLeave savedLeave = leaveRepository.save(leave);
-        logger.info("Leave application created successfully with ID: {}", savedLeave.getId());
+        TeacherLeave saved = leaveRepository.save(leave);
 
-        return mapToResponseDto(savedLeave);
+        logger.info("Leave application created: {}", saved.getId());
+
+        return mapToResponseDto(saved);
     }
 
     @Override
+    @Transactional(readOnly = true)
     public TeacherLeaveResponseDto getLeaveById(Long id) {
-        logger.info("Fetching leave application with ID: {}", id);
-        TeacherLeave leave = leaveRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Leave application not found with id: " + id));
+        TeacherLeave leave = getSchoolLeave(id);
+        verifyTeacherOwnsLeaveIfTeacher(leave);
         return mapToResponseDto(leave);
     }
 
     @Override
-    public List<TeacherLeaveResponseDto> getLeavesByTeacherId(Long teacherId) {
-        logger.info("Fetching leave applications for teacher ID: {}", teacherId);
-        return leaveRepository.findByTeacherId(teacherId).stream()
+    @Transactional(readOnly = true)
+    public List<TeacherLeaveResponseDto> getLeavesByTeacherId(
+            Long teacherId) {
+
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+        verifyTeacherAccessToTeacherId(teacherId, schoolId);
+
+        return leaveRepository
+                .findAllByTeacher_IdAndTeacher_School_IdOrderByStartDateDesc(
+                        teacherId, schoolId)
+                .stream()
                 .map(this::mapToResponseDto)
                 .toList();
     }
 
     @Override
-    public List<TeacherLeaveResponseDto> getLeavesByTeacherIdAndStatus(Long teacherId, String status) {
-        logger.info("Fetching leave applications for teacher ID: {} with status: {}", teacherId, status);
-        return leaveRepository.findByTeacherIdAndStatus(teacherId, status).stream()
-                .map(this::mapToResponseDto)
+    @Transactional(readOnly = true)
+    public List<TeacherLeaveResponseDto> getLeavesByTeacherIdAndStatus(
+            Long teacherId, String status) {
+
+        return getLeavesByTeacherId(teacherId).stream()
+                .filter(leave -> leave.getStatus() != null
+                        && leave.getStatus().equalsIgnoreCase(status))
                 .toList();
     }
 
     @Override
+    @Transactional(readOnly = true)
     public List<TeacherLeaveResponseDto> getLeavesByStatus(String status) {
-        logger.info("Fetching leave applications with status: {}", status);
-        return leaveRepository.findByStatus(status).stream()
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        return leaveRepository
+                .findAllByTeacher_School_IdOrderByStartDateDesc(schoolId)
+                .stream()
+                .filter(leave -> leave.getStatus() != null
+                        && leave.getStatus().equalsIgnoreCase(status))
                 .map(this::mapToResponseDto)
                 .toList();
     }
 
     @Override
-    public TeacherLeaveResponseDto approveLeave(Long id, TeacherLeaveApprovalDto approval, String approvedBy) {
-        logger.info("Approving/rejecting leave application with ID: {}", id);
-        TeacherLeave leave = leaveRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Leave application not found with id: " + id));
+    @Transactional(readOnly = true)
+    public List<TeacherLeaveResponseDto> getAllSchoolLeaves() {
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
-        if (!leave.getStatus().equals("PENDING")) {
-            throw new IllegalArgumentException("Can only approve or reject pending leave applications");
-        }
-
-        if (!approval.getStatus().equals("APPROVED") && !approval.getStatus().equals("REJECTED")) {
-            throw new IllegalArgumentException("Status must be either APPROVED or REJECTED");
-        }
-
-        leave.setStatus(approval.getStatus());
-        leave.setApprovedAt(LocalDateTime.now());
-        leave.setApprovedBy(approvedBy);
-
-        if (approval.getStatus().equals("REJECTED")) {
-            leave.setRejectionReason(approval.getRejectionReason());
-        }
-
-        TeacherLeave updatedLeave = leaveRepository.save(leave);
-        logger.info("Leave application {} successfully with ID: {}", approval.getStatus(), updatedLeave.getId());
-
-        return mapToResponseDto(updatedLeave);
+        return leaveRepository
+                .findAllByTeacher_School_IdOrderByStartDateDesc(schoolId)
+                .stream()
+                .map(this::mapToResponseDto)
+                .toList();
     }
 
     @Override
-    public TeacherLeaveResponseDto updateLeave(Long id, TeacherLeaveRequestDto request) {
-        logger.info("Updating leave application with ID: {}", id);
-        TeacherLeave leave = leaveRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Leave application not found with id: " + id));
+    public TeacherLeaveResponseDto updateLeave(
+            Long id, TeacherLeaveRequestDto request) {
 
-        if (!leave.getStatus().equals("PENDING")) {
-            throw new IllegalArgumentException("Can only update pending leave applications");
-        }
+        TeacherLeave leave = getSchoolLeave(id);
+        verifyTeacherOwnsLeaveIfTeacher(leave);
 
-        Teacher teacher = teacherRepository.findById(request.getTeacherId())
-                .orElseThrow(() -> new ResourceNotFoundException("Teacher not found with id: " + request.getTeacherId()));
+        validateDates(request.getStartDate(), request.getEndDate());
 
-        if (request.getEndDate().isBefore(request.getStartDate())) {
-            throw new IllegalArgumentException("End date must be after start date");
-        }
+        checkOverlap(
+                leave.getTeacher().getId(),
+                request.getStartDate(),
+                request.getEndDate(),
+                leave.getId()
+        );
 
-        leave.setTeacher(teacher);
+        // Do not allow changing the teacher associated with an existing leave.
         leave.setLeaveType(request.getLeaveType());
         leave.setStartDate(request.getStartDate());
         leave.setEndDate(request.getEndDate());
         leave.setReason(request.getReason());
 
-        TeacherLeave updatedLeave = leaveRepository.save(leave);
-        logger.info("Leave application updated successfully with ID: {}", updatedLeave.getId());
+        // Approval/rejection fields are not used by this workflow.
+        TeacherLeave updated = leaveRepository.save(leave);
 
-        return mapToResponseDto(updatedLeave);
+        logger.info("Leave application updated: {}", updated.getId());
+
+        return mapToResponseDto(updated);
     }
 
     @Override
     public void deleteLeave(Long id) {
-        logger.info("Deleting leave application with ID: {}", id);
-        TeacherLeave leave = leaveRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Leave application not found with id: " + id));
-
-        if (!leave.getStatus().equals("PENDING")) {
-            throw new IllegalArgumentException("Can only delete pending leave applications");
-        }
+        TeacherLeave leave = getSchoolLeave(id);
+        verifyTeacherOwnsLeaveIfTeacher(leave);
 
         leaveRepository.delete(leave);
-        logger.info("Leave application deleted successfully");
+        logger.info("Leave application deleted: {}", id);
+    }
+
+    private TeacherLeave getSchoolLeave(Long id) {
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        return leaveRepository.findByIdAndTeacher_School_Id(id, schoolId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Leave application not found in your school: " + id));
+    }
+
+    private Teacher getCurrentTeacher(Long schoolId) {
+        String username = currentUsername();
+
+        return teacherRepository
+                .findByUsernameAndSchoolId(username, schoolId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Teacher profile not found for the logged-in user"));
+    }
+
+    private void verifyTeacherOwnsLeaveIfTeacher(TeacherLeave leave) {
+        if (isSchoolAdmin()) {
+            return;
+        }
+
+        Teacher currentTeacher = getCurrentTeacher(
+                currentSchoolService.getCurrentSchoolId());
+
+        if (!currentTeacher.getId().equals(leave.getTeacher().getId())) {
+            throw new AccessDeniedException(
+                    "You can access only your own leave applications");
+        }
+    }
+
+    private void verifyTeacherAccessToTeacherId(
+            Long teacherId, Long schoolId) {
+
+        if (isSchoolAdmin()) {
+            boolean belongsToSchool =
+                    teacherRepository.existsByIdAndSchool_Id(
+                            teacherId, schoolId);
+
+            if (!belongsToSchool) {
+                throw new ResourceNotFoundException(
+                        "Teacher not found in your school");
+            }
+            return;
+        }
+
+        Teacher currentTeacher = getCurrentTeacher(schoolId);
+
+        if (!currentTeacher.getId().equals(teacherId)) {
+            throw new AccessDeniedException(
+                    "You can view only your own leave applications");
+        }
+    }
+
+    private void checkOverlap(
+            Long teacherId,
+            LocalDate startDate,
+            LocalDate endDate,
+            Long excludeLeaveId) {
+
+        boolean overlap;
+
+        if (excludeLeaveId == null) {
+            overlap = leaveRepository
+                    .existsByTeacher_IdAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+                            teacherId, endDate, startDate);
+        } else {
+            overlap = leaveRepository
+                    .existsByTeacher_IdAndStartDateLessThanEqualAndEndDateGreaterThanEqualAndIdNot(
+                            teacherId, endDate, startDate, excludeLeaveId);
+        }
+
+        if (overlap) {
+            throw new IllegalArgumentException(
+                    "Teacher already has a leave application during this period");
+        }
+    }
+
+    private void validateDates(LocalDate startDate, LocalDate endDate) {
+        if (startDate == null || endDate == null) {
+            throw new IllegalArgumentException(
+                    "Start date and end date are required");
+        }
+
+        if (endDate.isBefore(startDate)) {
+            throw new IllegalArgumentException(
+                    "End date must be on or after start date");
+        }
+    }
+
+    private boolean isSchoolAdmin() {
+        Authentication authentication =
+                SecurityContextHolder.getContext().getAuthentication();
+
+        return authentication != null
+                && authentication.getAuthorities().stream()
+                .anyMatch(authority ->
+                        authority.getAuthority().equals("ROLE_SCHOOL_ADMIN")
+                                || authority.getAuthority().equals("SCHOOL_ADMIN"));
+    }
+
+    private String currentUsername() {
+        Authentication authentication =
+                SecurityContextHolder.getContext().getAuthentication();
+
+        if (authentication == null
+                || !authentication.isAuthenticated()
+                || authentication.getName() == null) {
+            throw new AccessDeniedException("Authentication required");
+        }
+
+        return authentication.getName();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<TeacherLeaveResponseDto> getLeavesByYear(int year) {
+        if (year < 1900 || year > 2200) {
+            throw new IllegalArgumentException("Invalid year");
+        }
+
+        return getLeavesForPeriod(
+                LocalDate.of(year, 1, 1),
+                LocalDate.of(year, 12, 31)
+        );
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<TeacherLeaveResponseDto> getLeavesByYearAndMonth(
+            int year, int month) {
+
+        final YearMonth yearMonth;
+
+        try {
+            yearMonth = YearMonth.of(year, month);
+        } catch (DateTimeException ex) {
+            throw new IllegalArgumentException(
+                    "Invalid year or month. Month must be between 1 and 12.");
+        }
+
+        return getLeavesForPeriod(
+                yearMonth.atDay(1),
+                yearMonth.atEndOfMonth()
+        );
+    }
+
+    private List<TeacherLeaveResponseDto> getLeavesForPeriod(
+            LocalDate periodStart,
+            LocalDate periodEnd) {
+
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+        List<TeacherLeave> leaves;
+
+        if (isSchoolAdmin()) {
+            leaves = leaveRepository
+                    .findAllByTeacher_School_IdAndStartDateLessThanEqualAndEndDateGreaterThanEqualOrderByStartDateDesc(
+                            schoolId, periodEnd, periodStart);
+        } else {
+            Teacher teacher = getCurrentTeacher(schoolId);
+
+            leaves = leaveRepository
+                    .findAllByTeacher_IdAndTeacher_School_IdAndStartDateLessThanEqualAndEndDateGreaterThanEqualOrderByStartDateDesc(
+                            teacher.getId(), schoolId, periodEnd, periodStart);
+        }
+
+        return leaves.stream()
+                .map(this::mapToResponseDto)
+                .toList();
     }
 
     private TeacherLeaveResponseDto mapToResponseDto(TeacherLeave leave) {
         return TeacherLeaveResponseDto.builder()
                 .id(leave.getId())
-                .teacherId(leave.getTeacher() != null ? leave.getTeacher().getId() : null)
-                .teacherName(leave.getTeacher() != null ? leave.getTeacher().getName() : null)
+                .teacherId(leave.getTeacher() != null
+                        ? leave.getTeacher().getId() : null)
+                .teacherName(leave.getTeacher() != null
+                        ? leave.getTeacher().getName() : null)
                 .leaveType(leave.getLeaveType())
                 .startDate(leave.getStartDate())
                 .endDate(leave.getEndDate())
                 .reason(leave.getReason())
                 .status(leave.getStatus())
-                .rejectionReason(leave.getRejectionReason())
                 .appliedAt(leave.getAppliedAt())
-                .approvedAt(leave.getApprovedAt())
-                .approvedBy(leave.getApprovedBy())
                 .createdAt(leave.getCreatedAt())
                 .updatedAt(leave.getUpdatedAt())
                 .build();

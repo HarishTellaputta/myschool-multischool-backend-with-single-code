@@ -1,3 +1,4 @@
+
 package com.harish.student_management.service;
 
 import com.harish.student_management.dto.SectionImportResponseDto;
@@ -18,12 +19,14 @@ public interface SectionService {
 
     List<SectionResponseDto> getSectionsByClassId(Long classId);
 
-    SectionResponseDto updateSection(Long id, SectionRequestDto request);
+    SectionResponseDto updateSection(
+            Long id,
+            SectionRequestDto request
+    );
 
     void deleteSection(Long id);
 
     SectionImportResponseDto importSections(
-            MultipartFile file,
-            Long schoolId
+            MultipartFile file
     ) throws IOException;
 }

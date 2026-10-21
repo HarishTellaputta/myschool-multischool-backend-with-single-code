@@ -1,3 +1,4 @@
+
 package com.harish.student_management.entity;
 
 import jakarta.persistence.*;
@@ -37,20 +38,13 @@ public class TeacherLeave {
     @Column(length = 500)
     private String reason;
 
-    @Column(length = 20)
-    private String status;
-
-    @Column(length = 500)
-    private String rejectionReason;
+    // No approval/rejection workflow.
+    @Column(length = 20, nullable = false)
+    @Builder.Default
+    private String status = "APPLIED";
 
     @Column(name = "applied_at", updatable = false)
     private LocalDateTime appliedAt;
-
-    @Column(name = "approved_at")
-    private LocalDateTime approvedAt;
-
-    @Column(name = "approved_by")
-    private String approvedBy;
 
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
@@ -60,11 +54,20 @@ public class TeacherLeave {
 
     @PrePersist
     protected void onCreate() {
-        createdAt = LocalDateTime.now();
-        updatedAt = LocalDateTime.now();
-        appliedAt = LocalDateTime.now();
-        if (status == null) {
-            status = "PENDING";
+        LocalDateTime now = LocalDateTime.now();
+
+        if (createdAt == null) {
+            createdAt = now;
+        }
+
+        updatedAt = now;
+
+        if (appliedAt == null) {
+            appliedAt = now;
+        }
+
+        if (status == null || status.isBlank()) {
+            status = "APPLIED";
         }
     }
 

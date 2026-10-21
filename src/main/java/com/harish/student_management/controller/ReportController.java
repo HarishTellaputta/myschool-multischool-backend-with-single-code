@@ -25,16 +25,16 @@ public class ReportController {
     private final McqTestService mcqTestService;
     private final FeeService feeService;
 
-    @GetMapping("/attendance")
-    @PreAuthorize("hasAnyRole('SCHOOL_ADMIN','TEACHER')")
-    public Page<AttendanceReportDto> attendance(
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
-            Pageable page) {
-
-        validateRange(from, to);
-        return attendanceService.getAttendanceReport(from, to, page);
-    }
+//    @GetMapping("/attendance")
+//    @PreAuthorize("hasAnyRole('SCHOOL_ADMIN','TEACHER')")
+//    public Page<AttendanceReportDto> attendance(
+//            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+//            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+//            Pageable page) {
+//
+//        validateRange(from, to);
+//        return attendanceService.getAttendanceReport(from, to, page);
+//    }
 
 
     @GetMapping("/fees")
@@ -77,34 +77,34 @@ public class ReportController {
         );
     }
 
-    @GetMapping("/mcq-performance")
-    @PreAuthorize("hasAnyRole('SCHOOL_ADMIN','TEACHER')")
-    public Page<McqAttemptResponseDto> mcq(
-
-            @RequestParam(required = false)
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
-            LocalDate date,
-
-            @RequestParam(required = false)
-            Long classId,
-
-            @RequestParam(required = false)
-            Long sectionId,
-
-            @RequestParam(required = false)
-            String subject,
-
-            Pageable page
-    ) {
-
-        return mcqTestService.reportPerformance(
-                date,
-                classId,
-                sectionId,
-                subject,
-                page
-        );
-    }
+//    @GetMapping("/mcq-performance")
+//    @PreAuthorize("hasAnyRole('SCHOOL_ADMIN','TEACHER')")
+//    public Page<McqAttemptResponseDto> mcq(
+//
+//            @RequestParam(required = false)
+//            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+//            LocalDate date,
+//
+//            @RequestParam(required = false)
+//            Long classId,
+//
+//            @RequestParam(required = false)
+//            Long sectionId,
+//
+//            @RequestParam(required = false)
+//            String subject,
+//
+//            Pageable page
+//    ) {
+//
+//        return mcqTestService.reportPerformance(
+//                date,
+//                classId,
+//                sectionId,
+//                subject,
+//                page
+//        );
+//    }
 
 
     private void validateRange(LocalDate from, LocalDate to) {

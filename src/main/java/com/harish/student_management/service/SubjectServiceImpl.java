@@ -1,144 +1,151 @@
 package com.harish.student_management.service;
 
-
 import com.harish.student_management.dto.SubjectImportResponseDto;
 import com.harish.student_management.dto.SubjectRequest;
 import com.harish.student_management.dto.SubjectResponse;
+import com.harish.student_management.entity.ClassSubject;
 import com.harish.student_management.entity.School;
 import com.harish.student_management.entity.Subject;
+import com.harish.student_management.exception.ResourceNotFoundException;
 import com.harish.student_management.repository.ClassSubjectRepository;
 import com.harish.student_management.repository.SchoolRepository;
 import com.harish.student_management.repository.SubjectRepository;
-import com.harish.student_management.service.SubjectService;
 import lombok.RequiredArgsConstructor;
+import org.apache.poi.ss.usermodel.*;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
-
-import com.harish.student_management.dto.SubjectImportResponseDto;
-
-import org.apache.poi.ss.usermodel.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
-@Transactional
+@Transactional(readOnly = true)
 public class SubjectServiceImpl implements SubjectService {
 
     private final SubjectRepository subjectRepository;
     private final SchoolRepository schoolRepository;
     private final ClassSubjectRepository classSubjectRepository;
+    private final CurrentSchoolService currentSchoolService;
+
+    private Long currentSchoolId() {
+        return currentSchoolService.getCurrentSchoolId();
+    }
+
+    private void verifyRequestedSchool(Long requestedSchoolId) {
+        if (requestedSchoolId == null
+                || !currentSchoolId().equals(requestedSchoolId)) {
+            throw new AccessDeniedException(
+                    "You cannot access another school's subjects");
+        }
+    }
+
+    private Subject getSubjectForCurrentSchool(Long id) {
+        return subjectRepository.findByIdAndSchoolId(id, currentSchoolId())
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Subject not found: " + id));
+    }
 
     @Override
+    @Transactional
     public SubjectResponse createSubject(SubjectRequest request) {
+        Long schoolId = currentSchoolId();
 
-        if (request.getSchoolId() == null) {
-            throw new RuntimeException("School ID is required");
-        }
-
-        School school = schoolRepository.findById(request.getSchoolId())
+        School school = schoolRepository.findById(schoolId)
                 .orElseThrow(() ->
-                        new RuntimeException("School not found"));
+                        new ResourceNotFoundException(
+                                "Current school not found"));
 
-        if (subjectRepository.existsBySchoolIdAndCode(
-                request.getSchoolId(),
-                request.getCode())) {
+        String code = normalizeCode(request.getCode());
 
-            throw new RuntimeException(
-                    "Subject code already exists for this school"
-            );
+        if (subjectRepository.findBySchoolIdAndCode(schoolId, code)
+                .isPresent()) {
+            throw new IllegalArgumentException(
+                    "Subject code already exists for this school");
         }
 
         Subject subject = Subject.builder()
                 .school(school)
-                .name(request.getName())
-                .code(request.getCode())
+                .name(request.getName().trim())
+                .code(code)
                 .description(request.getDescription())
-                .status(
-                        request.getStatus() == null
-                                ? "ACTIVE"
-                                : request.getStatus()
-                )
+                .status(normalizeStatus(request.getStatus()))
                 .build();
 
         return mapToResponse(subjectRepository.save(subject));
     }
 
     @Override
-    @Transactional(readOnly = true)
     public List<SubjectResponse> getAllSubjects() {
-
-        return subjectRepository.findAll()
+        return subjectRepository.findBySchoolId(currentSchoolId())
                 .stream()
                 .map(this::mapToResponse)
                 .toList();
     }
 
     @Override
-    @Transactional(readOnly = true)
     public List<SubjectResponse> getSubjectsBySchool(Long schoolId) {
+        verifyRequestedSchool(schoolId);
 
-        return subjectRepository.findBySchoolId(schoolId)
+        return subjectRepository.findBySchoolId(currentSchoolId())
                 .stream()
                 .map(this::mapToResponse)
                 .toList();
     }
 
     @Override
-    @Transactional(readOnly = true)
     public List<SubjectResponse> getActiveSubjectsBySchool(Long schoolId) {
+        verifyRequestedSchool(schoolId);
 
         return subjectRepository
-                .findBySchoolIdAndStatus(schoolId, "ACTIVE")
+                .findBySchoolIdAndStatus(currentSchoolId(), "ACTIVE")
                 .stream()
                 .map(this::mapToResponse)
                 .toList();
     }
 
     @Override
-    @Transactional(readOnly = true)
     public SubjectResponse getSubjectById(Long id) {
-
-        Subject subject = subjectRepository.findById(id)
-                .orElseThrow(() ->
-                        new RuntimeException("Subject not found"));
-
-        return mapToResponse(subject);
+        return mapToResponse(getSubjectForCurrentSchool(id));
     }
 
     @Override
+    @Transactional
     public SubjectResponse updateSubject(
-            Long id,
-            SubjectRequest request) {
+            Long id, SubjectRequest request) {
 
-        Subject subject = subjectRepository.findById(id)
-                .orElseThrow(() ->
-                        new RuntimeException("Subject not found"));
+        Subject subject = getSubjectForCurrentSchool(id);
 
-        if (request.getCode() != null &&
-                !request.getCode().equals(subject.getCode())) {
+        if (request.getCode() != null
+                && !request.getCode().isBlank()) {
 
-            if (subjectRepository.existsBySchoolIdAndCode(
-                    subject.getSchool().getId(),
-                    request.getCode())) {
+            String code = normalizeCode(request.getCode());
 
-                throw new RuntimeException(
-                        "Subject code already exists for this school"
-                );
+            boolean codeUsed = subjectRepository
+                    .findBySchoolIdAndCode(
+                            currentSchoolId(), code)
+                    .filter(existing ->
+                            !existing.getId().equals(subject.getId()))
+                    .isPresent();
+
+            if (codeUsed) {
+                throw new IllegalArgumentException(
+                        "Subject code already exists for this school");
             }
 
-            subject.setCode(request.getCode());
+            subject.setCode(code);
         }
 
-        if (request.getName() != null) {
-            subject.setName(request.getName());
+        if (request.getName() != null
+                && !request.getName().isBlank()) {
+            subject.setName(request.getName().trim());
         }
 
         if (request.getDescription() != null) {
@@ -146,72 +153,58 @@ public class SubjectServiceImpl implements SubjectService {
         }
 
         if (request.getStatus() != null) {
-            subject.setStatus(request.getStatus());
+            subject.setStatus(normalizeStatus(request.getStatus()));
         }
 
+        // Do not change subject.school using request data.
         return mapToResponse(subjectRepository.save(subject));
     }
 
     @Override
+    @Transactional
     public void deleteSubject(Long id) {
-
-        Subject subject = subjectRepository.findById(id)
-                .orElseThrow(() ->
-                        new RuntimeException("Subject not found"));
-
+        Subject subject = getSubjectForCurrentSchool(id);
         subjectRepository.delete(subject);
     }
 
-    private SubjectResponse mapToResponse(Subject subject) {
-
-        return SubjectResponse.builder()
-                .id(subject.getId())
-                .schoolId(subject.getSchool().getId())
-                .name(subject.getName())
-                .code(subject.getCode())
-                .description(subject.getDescription())
-                .status(subject.getStatus())
-                .build();
-    }
-
     @Override
-    @Transactional(readOnly = true)
     public List<SubjectResponse> getSubjectsByClass(Long classId) {
+        Long schoolId = currentSchoolId();
 
-        return classSubjectRepository
-                .findByClassEntityId(classId)
-                .stream()
-                .map(classSubject -> mapToResponse(classSubject.getSubject()))
+        List<ClassSubject> assignments =
+                classSubjectRepository.findByClassIdAndSchoolId(
+                        classId, schoolId);
+
+        return assignments.stream()
+                .map(ClassSubject::getSubject)
+                .map(this::mapToResponse)
                 .toList();
     }
 
     @Override
+    @Transactional
     public SubjectImportResponseDto importSubjects(
-            MultipartFile file,
-            Long schoolId
-    ) throws IOException {
+            MultipartFile file, Long schoolId) throws IOException {
+
+        verifyRequestedSchool(schoolId);
 
         if (file == null || file.isEmpty()) {
-            throw new RuntimeException("Excel file is required");
-        }
-
-        if (schoolId == null) {
-            throw new RuntimeException("School ID is required");
+            throw new IllegalArgumentException("Excel file is required");
         }
 
         String fileName = file.getOriginalFilename();
-
-        if (fileName == null ||
-                !fileName.toLowerCase().endsWith(".xlsx")) {
-
-            throw new RuntimeException(
-                    "Only .xlsx Excel files are supported"
-            );
+        if (fileName == null
+                || !fileName.toLowerCase(Locale.ROOT).endsWith(".xlsx")) {
+            throw new IllegalArgumentException(
+                    "Only .xlsx Excel files are supported");
         }
 
-        School school = schoolRepository.findById(schoolId)
+        Long authenticatedSchoolId = currentSchoolId();
+
+        School school = schoolRepository.findById(authenticatedSchoolId)
                 .orElseThrow(() ->
-                        new RuntimeException("School not found"));
+                        new ResourceNotFoundException(
+                                "Current school not found"));
 
         int totalRows = 0;
         int createdCount = 0;
@@ -219,60 +212,40 @@ public class SubjectServiceImpl implements SubjectService {
         int failedCount = 0;
 
         List<String> errors = new ArrayList<>();
-
         Set<String> processedCodes = new HashSet<>();
 
         try (Workbook workbook =
                      WorkbookFactory.create(file.getInputStream())) {
 
-            Sheet sheet = workbook.getSheetAt(0);
-
-            if (sheet.getPhysicalNumberOfRows() <= 1) {
-                throw new RuntimeException(
-                        "Excel file does not contain any subject data"
-                );
+            if (workbook.getNumberOfSheets() == 0) {
+                throw new IllegalArgumentException(
+                        "Excel workbook has no sheets");
             }
 
-            // ============================
-            // HEADER VALIDATION
-            // ============================
+            Sheet sheet = workbook.getSheetAt(0);
+            Row header = sheet.getRow(0);
 
-            Row headerRow = sheet.getRow(0);
-
-            if (headerRow == null) {
-                throw new RuntimeException(
-                        "Excel header row is missing"
-                );
+            if (header == null) {
+                throw new IllegalArgumentException(
+                        "Excel header row is missing");
             }
 
             String[] expectedHeaders = {
-                    "code",
-                    "name",
-                    "description",
-                    "status"
+                    "code", "name", "description", "status"
             };
 
+            DataFormatter formatter = new DataFormatter();
+
             for (int i = 0; i < expectedHeaders.length; i++) {
+                String actual = getCellValue(
+                        formatter, header.getCell(i));
 
-                String actualHeader =
-                        getCellValue(headerRow.getCell(i));
-
-                if (!expectedHeaders[i]
-                        .equalsIgnoreCase(actualHeader.trim())) {
-
-                    throw new RuntimeException(
+                if (!expectedHeaders[i].equalsIgnoreCase(actual.trim())) {
+                    throw new IllegalArgumentException(
                             "Invalid Excel headers. Expected order: "
-                                    + String.join(
-                                    ", ",
-                                    expectedHeaders
-                            )
-                    );
+                                    + String.join(", ", expectedHeaders));
                 }
             }
-
-            // ============================
-            // READ DATA ROWS
-            // ============================
 
             for (int rowIndex = 1;
                  rowIndex <= sheet.getLastRowNum();
@@ -280,134 +253,82 @@ public class SubjectServiceImpl implements SubjectService {
 
                 Row row = sheet.getRow(rowIndex);
 
-                if (row == null || isRowEmpty(row)) {
+                if (isRowEmpty(formatter, row)) {
                     continue;
                 }
 
                 totalRows++;
 
                 try {
+                    String code = normalizeCode(
+                            getCellValue(formatter, row.getCell(0)));
 
-                    String code =
-                            getCellValue(row.getCell(0)).trim();
+                    String name = getCellValue(
+                            formatter, row.getCell(1)).trim();
 
-                    String name =
-                            getCellValue(row.getCell(1)).trim();
+                    String description = getCellValue(
+                            formatter, row.getCell(2)).trim();
 
-                    String description =
-                            getCellValue(row.getCell(2)).trim();
+                    String status = normalizeStatus(
+                            getCellValue(formatter, row.getCell(3)));
 
-                    String status =
-                            getCellValue(row.getCell(3)).trim();
-
-                    // ============================
-                    // REQUIRED VALIDATION
-                    // ============================
-
-                    if (code.isEmpty()) {
-                        throw new RuntimeException(
-                                "Subject code is required"
-                        );
+                    if (code.isBlank()) {
+                        throw new IllegalArgumentException(
+                                "Subject code is required");
                     }
 
-                    if (name.isEmpty()) {
-                        throw new RuntimeException(
-                                "Subject name is required"
-                        );
+                    if (name.isBlank()) {
+                        throw new IllegalArgumentException(
+                                "Subject name is required");
                     }
 
-                    if (status.isEmpty()) {
-                        status = "ACTIVE";
+                    if (!processedCodes.add(code.toLowerCase(Locale.ROOT))) {
+                        throw new IllegalArgumentException(
+                                "Duplicate subject code in Excel: " + code);
                     }
 
-                    status = status.toUpperCase();
+                    var existing = subjectRepository.findBySchoolIdAndCode(
+                            authenticatedSchoolId, code);
 
-                    // ============================
-                    // DUPLICATE IN SAME EXCEL
-                    // ============================
-
-                    String duplicateKey =
-                            code.toLowerCase();
-
-                    if (!processedCodes.add(duplicateKey)) {
-
-                        throw new RuntimeException(
-                                "Duplicate subject code in Excel: "
-                                        + code
-                        );
-                    }
-
-                    // ============================
-                    // FIND EXISTING SUBJECT
-                    // ============================
-
-                    var existingSubject =
-                            subjectRepository
-                                    .findBySchoolIdAndCode(
-                                            schoolId,
-                                            code
-                                    );
-
-                    if (existingSubject.isPresent()) {
-
-                        Subject subject =
-                                existingSubject.get();
-
+                    if (existing.isPresent()) {
+                        Subject subject = existing.get();
                         subject.setName(name);
                         subject.setDescription(
-                                description.isEmpty()
-                                        ? null
-                                        : description
-                        );
+                                description.isBlank() ? null : description);
                         subject.setStatus(status);
 
                         subjectRepository.save(subject);
-
                         updatedCount++;
-
                     } else {
-
-                        Subject subject =
-                                Subject.builder()
-                                        .school(school)
-                                        .code(code)
-                                        .name(name)
-                                        .description(
-                                                description.isEmpty()
-                                                        ? null
-                                                        : description
-                                        )
-                                        .status(status)
-                                        .build();
+                        Subject subject = Subject.builder()
+                                .school(school)
+                                .code(code)
+                                .name(name)
+                                .description(
+                                        description.isBlank()
+                                                ? null : description)
+                                .status(status)
+                                .build();
 
                         subjectRepository.save(subject);
-
                         createdCount++;
                     }
 
-                } catch (Exception e) {
-
+                } catch (IllegalArgumentException e) {
                     failedCount++;
-
-                    errors.add(
-                            "Row " +
-                                    (rowIndex + 1) +
-                                    ": " +
-                                    e.getMessage()
-                    );
+                    errors.add("Row " + (rowIndex + 1) + ": "
+                            + safeMessage(e));
                 }
             }
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Unable to read the Excel file", e);
         }
 
-        String message;
-
-        if (failedCount == 0) {
-            message =
-                    "Subjects imported successfully.";
-        } else {
-            message =
-                    "Subjects import completed with some errors.";
-        }
+        String message = failedCount == 0
+                ? "Subjects imported successfully."
+                : "Subjects import completed with some errors.";
 
         return SubjectImportResponseDto.builder()
                 .totalRows(totalRows)
@@ -419,35 +340,58 @@ public class SubjectServiceImpl implements SubjectService {
                 .build();
     }
 
-
-    private String getCellValue(Cell cell) {
-
-        if (cell == null) {
-            return "";
-        }
-
-        DataFormatter formatter = new DataFormatter();
-
-        return formatter.formatCellValue(cell);
+    private String normalizeCode(String code) {
+        return code == null ? "" : code.trim().toUpperCase(Locale.ROOT);
     }
 
-    private boolean isRowEmpty(Row row) {
+    private String normalizeStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return "ACTIVE";
+        }
 
+        String normalized = status.trim().toUpperCase(Locale.ROOT);
+
+        if (!normalized.equals("ACTIVE")
+                && !normalized.equals("INACTIVE")) {
+            throw new IllegalArgumentException(
+                    "Status must be ACTIVE or INACTIVE");
+        }
+
+        return normalized;
+    }
+
+    private String getCellValue(DataFormatter formatter, Cell cell) {
+        return cell == null ? "" : formatter.formatCellValue(cell);
+    }
+
+    private boolean isRowEmpty(DataFormatter formatter, Row row) {
         if (row == null) {
             return true;
         }
 
         for (int i = 0; i < 4; i++) {
-
-            Cell cell = row.getCell(i);
-
-            if (cell != null &&
-                    !getCellValue(cell).trim().isEmpty()) {
-
+            if (!getCellValue(formatter, row.getCell(i)).trim().isEmpty()) {
                 return false;
             }
         }
 
         return true;
+    }
+
+    private String safeMessage(Exception e) {
+        String message = e.getMessage();
+        return message == null || message.isBlank()
+                ? "Invalid row data" : message;
+    }
+
+    private SubjectResponse mapToResponse(Subject subject) {
+        return SubjectResponse.builder()
+                .id(subject.getId())
+                .schoolId(subject.getSchool().getId())
+                .name(subject.getName())
+                .code(subject.getCode())
+                .description(subject.getDescription())
+                .status(subject.getStatus())
+                .build();
     }
 }

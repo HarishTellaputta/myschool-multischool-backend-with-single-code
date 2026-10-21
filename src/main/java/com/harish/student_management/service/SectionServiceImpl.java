@@ -38,27 +38,41 @@ public class SectionServiceImpl implements SectionService {
     private final SectionRepository sectionRepository;
     private final ClassRepository classRepository;
 
+
+    private final CurrentSchoolService currentSchoolService;
+
+    private Long getSchoolId() {
+        return currentSchoolService.getCurrentSchoolId();
+    }
+
+    private ClassEntity getClassForCurrentSchool(Long classId) {
+        return classRepository
+                .findByIdAndSchool_Id(classId, getSchoolId())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Class not found with id: " + classId
+                ));
+    }
+
+    private Section getSectionForCurrentSchool(Long sectionId) {
+        return sectionRepository
+                .findByIdAndSchoolId(sectionId, getSchoolId())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Section not found with id: " + sectionId
+                ));
+    }
+
     // =========================================================
     // CREATE
     // =========================================================
 
     @Override
-    public SectionResponseDto createSection(
-            SectionRequestDto request) {
+    public SectionResponseDto createSection(SectionRequestDto request) {
+        logger.info("Creating section with name: {}", request.getName());
 
-        logger.info(
-                "Creating section with name: {}",
-                request.getName()
-        );
-
+        // Only a class belonging to the authenticated user's school
+        // can be assigned to this section.
         ClassEntity classEntity =
-                classRepository.findById(request.getClassId())
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "Class not found with id: "
-                                                + request.getClassId()
-                                )
-                        );
+                getClassForCurrentSchool(request.getClassId());
 
         Section section = Section.builder()
                 .classEntity(classEntity)
@@ -67,8 +81,7 @@ public class SectionServiceImpl implements SectionService {
                 .description(request.getDescription())
                 .build();
 
-        Section savedSection =
-                sectionRepository.save(section);
+        Section savedSection = sectionRepository.save(section);
 
         logger.info(
                 "Section created successfully with ID: {}",
@@ -77,67 +90,56 @@ public class SectionServiceImpl implements SectionService {
 
         return mapToResponseDto(savedSection);
     }
-
     // =========================================================
     // GET BY ID
     // =========================================================
 
     @Override
-    public SectionResponseDto getSectionById(
-            Long id) {
+    public SectionResponseDto getSectionById(Long id) {
+        logger.info("Fetching section with ID: {}", id);
 
-        logger.info(
-                "Fetching section with ID: {}",
-                id
-        );
-
-        Section section =
-                sectionRepository.findById(id)
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "Section not found with id: "
-                                                + id
-                                )
-                        );
+        Section section = getSectionForCurrentSchool(id);
 
         return mapToResponseDto(section);
     }
-
     // =========================================================
     // GET ALL
     // =========================================================
 
     @Override
     public List<SectionResponseDto> getAllSections() {
+        Long schoolId = getSchoolId();
 
-        logger.info("Fetching all sections");
+        logger.info("Fetching all sections for school ID: {}", schoolId);
 
-        return sectionRepository.findAll()
+        return sectionRepository.findAllBySchoolId(schoolId)
                 .stream()
                 .map(this::mapToResponseDto)
                 .toList();
     }
-
     // =========================================================
     // GET BY CLASS
     // =========================================================
 
     @Override
-    public List<SectionResponseDto> getSectionsByClassId(
-            Long classId) {
+    public List<SectionResponseDto> getSectionsByClassId(Long classId) {
+        Long schoolId = getSchoolId();
 
         logger.info(
-                "Fetching sections for class ID: {}",
-                classId
+                "Fetching sections for class ID: {} and school ID: {}",
+                classId,
+                schoolId
         );
 
+        // Reject class IDs belonging to another school.
+        getClassForCurrentSchool(classId);
+
         return sectionRepository
-                .findByClassEntityId(classId)
+                .findByClassIdAndSchoolId(classId, schoolId)
                 .stream()
                 .map(this::mapToResponseDto)
                 .toList();
     }
-
     // =========================================================
     // UPDATE
     // =========================================================
@@ -147,36 +149,21 @@ public class SectionServiceImpl implements SectionService {
             Long id,
             SectionRequestDto request) {
 
-        logger.info(
-                "Updating section with ID: {}",
-                id
-        );
+        logger.info("Updating section with ID: {}", id);
 
-        Section section =
-                sectionRepository.findById(id)
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "Section not found with id: "
-                                                + id
-                                )
-                        );
+        // Section must belong to the authenticated user's school.
+        Section section = getSectionForCurrentSchool(id);
 
+        // Destination class must also belong to that same school.
         ClassEntity classEntity =
-                classRepository.findById(request.getClassId())
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "Class not found with id: "
-                                                + request.getClassId()
-                                )
-                        );
+                getClassForCurrentSchool(request.getClassId());
 
         section.setClassEntity(classEntity);
         section.setName(request.getName());
         section.setCapacity(request.getCapacity());
         section.setDescription(request.getDescription());
 
-        Section updatedSection =
-                sectionRepository.save(section);
+        Section updatedSection = sectionRepository.save(section);
 
         logger.info(
                 "Section updated successfully with ID: {}",
@@ -185,49 +172,37 @@ public class SectionServiceImpl implements SectionService {
 
         return mapToResponseDto(updatedSection);
     }
-
     // =========================================================
     // DELETE
     // =========================================================
 
     @Override
     public void deleteSection(Long id) {
+        logger.info("Deleting section with ID: {}", id);
 
-        logger.info(
-                "Deleting section with ID: {}",
-                id
-        );
-
-        Section section =
-                sectionRepository.findById(id)
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "Section not found with id: "
-                                                + id
-                                )
-                        );
+        Section section = getSectionForCurrentSchool(id);
 
         sectionRepository.delete(section);
 
-        logger.info(
-                "Section deleted successfully with ID: {}",
-                id
-        );
+        logger.info("Section deleted successfully with ID: {}", id);
     }
-
     // =========================================================
     // EXCEL IMPORT
     // =========================================================
 
     @Override
     public SectionImportResponseDto importSections(
-            MultipartFile file,
-            Long schoolId) throws IOException {
+            MultipartFile file) throws IOException {
+
+        // Never accept schoolId from the client.
+        Long schoolId = getSchoolId();
 
         logger.info(
                 "Starting section Excel import for school ID: {}",
                 schoolId
         );
+
+        // Keep the rest of your existing Excel import logic below this.
 
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException(
@@ -433,19 +408,22 @@ public class SectionServiceImpl implements SectionService {
                     Integer capacity;
 
                     try {
+                        double numericCapacity = Double.parseDouble(capacityValue);
 
-                        double numericCapacity =
-                                Double.parseDouble(
-                                        capacityValue
-                                );
+                        if (!Double.isFinite(numericCapacity)
+                                || numericCapacity < 0
+                                || numericCapacity != Math.floor(numericCapacity)
+                                || numericCapacity > Integer.MAX_VALUE) {
+                            throw new IllegalArgumentException(
+                                    "Capacity must be a non-negative whole number."
+                            );
+                        }
 
-                        capacity =
-                                (int) numericCapacity;
+                        capacity = (int) numericCapacity;
 
                     } catch (NumberFormatException e) {
-
                         throw new IllegalArgumentException(
-                                "Capacity must be a valid number."
+                                "Capacity must be a valid whole number."
                         );
                     }
 

@@ -1,5 +1,6 @@
 package com.harish.student_management.service;
 
+import com.harish.student_management.dto.CreateSchoolWithAdminRequestDto;
 import com.harish.student_management.dto.SchoolImportResponseDto;
 import com.harish.student_management.dto.SchoolRequestDto;
 import com.harish.student_management.dto.SchoolResponseDto;
@@ -22,6 +23,13 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
 
+import com.harish.student_management.entity.Role;
+import com.harish.student_management.entity.User;
+import com.harish.student_management.repository.RoleRepository;
+import com.harish.student_management.repository.UserRepository;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
+
 @Service
 @RequiredArgsConstructor
 public class SchoolServiceImpl implements SchoolService {
@@ -31,9 +39,13 @@ public class SchoolServiceImpl implements SchoolService {
 
     private final SchoolRepository schoolRepository;
 
+    private final UserRepository userRepository;
+    private final RoleRepository roleRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final CurrentSchoolService currentSchoolService;
+
     private static final List<String> REQUIRED_HEADERS = List.of(
             "name",
-            "code",
             "address",
             "affiliationNumber",
             "city",
@@ -58,57 +70,89 @@ public class SchoolServiceImpl implements SchoolService {
     // =========================================================
 
     @Override
-    public SchoolResponseDto createSchool(SchoolRequestDto request) {
+    @Transactional
+    public SchoolResponseDto createSchoolWithAdmin(
+            CreateSchoolWithAdminRequestDto request) {
 
-        logger.info(
-                "Creating school with code: {}",
-                request.getCode()
-        );
+        SchoolRequestDto schoolRequest = request.getSchool();
 
-        if (schoolRepository.existsByCode(request.getCode())) {
+        if (schoolRequest == null) {
+            throw new IllegalArgumentException("School details are required");
+        }
+        if (schoolRequest.getStatus() != null
+                && !schoolRequest.getStatus().equalsIgnoreCase("ACTIVE")) {
             throw new IllegalArgumentException(
-                    "School already exists with code: "
-                            + request.getCode()
+                    "A new school must have ACTIVE status"
             );
         }
 
+        String generatedCode = "SCH-" + UUID.randomUUID()
+                .toString()
+                .substring(0, 8)
+                .toUpperCase(Locale.ROOT);
+
+        if (schoolRepository.existsByName(schoolRequest.getName())) {
+            throw new IllegalArgumentException(
+                    "School already exists with name: " + schoolRequest.getName());
+        }
+
+        if (userRepository.existsByUsername(request.getAdminUsername())) {
+            throw new IllegalArgumentException("Admin username already exists");
+        }
+
+        if (userRepository.existsByEmail(request.getAdminEmail())) {
+            throw new IllegalArgumentException("Admin email already exists");
+        }
+
+        Role adminRole = roleRepository.findByName("SCHOOL_ADMIN")
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "SCHOOL_ADMIN role is not initialized"));
+
         School school = School.builder()
-                .name(request.getName())
-                .code(request.getCode())
-                .phone(request.getPhone())
-                .email(request.getEmail())
-                .address(request.getAddress())
-                .city(request.getCity())
-                .state(request.getState())
-                .postalCode(request.getPostalCode())
-                .country(request.getCountry())
-                .website(request.getWebsite())
-                .logoUrl(request.getLogoUrl())
-                .principalMessage(request.getPrincipalMessage())
-                .principalName(request.getPrincipalName())
-                .facilities(request.getFacilities())
-                .facultyInfo(request.getFacultyInfo())
-                .establishmentYear(request.getEstablishmentYear())
-                .affiliationNumber(request.getAffiliationNumber())
-                .schoolType(request.getSchoolType())
-                .status(
-                        request.getStatus() != null
-                                ? request.getStatus()
-                                : "ACTIVE"
-                )
+                .name(schoolRequest.getName())
+                .code(generatedCode)
+                .phone(schoolRequest.getPhone())
+                .email(schoolRequest.getEmail())
+                .address(schoolRequest.getAddress())
+                .city(schoolRequest.getCity())
+                .state(schoolRequest.getState())
+                .postalCode(schoolRequest.getPostalCode())
+                .country(schoolRequest.getCountry())
+                .website(schoolRequest.getWebsite())
+                .logoUrl(schoolRequest.getLogoUrl())
+                .principalMessage(schoolRequest.getPrincipalMessage())
+                .principalName(schoolRequest.getPrincipalName())
+                .facilities(schoolRequest.getFacilities())
+                .facultyInfo(schoolRequest.getFacultyInfo())
+                .establishmentYear(schoolRequest.getEstablishmentYear())
+                .affiliationNumber(schoolRequest.getAffiliationNumber())
+                .schoolType(schoolRequest.getSchoolType())
+                .status(schoolRequest.getStatus() != null
+                        ? schoolRequest.getStatus()
+                        : "ACTIVE")
                 .build();
 
-        School savedSchool =
-                schoolRepository.save(school);
+        School savedSchool = schoolRepository.save(school);
+
+        User admin = User.builder()
+                .username(request.getAdminUsername().trim())
+                .email(request.getAdminEmail().trim())
+                .password(passwordEncoder.encode(request.getAdminPassword()))
+                .role(adminRole)
+                .school(savedSchool)
+                .status("ACTIVE")
+                .build();
+
+        userRepository.save(admin);
 
         logger.info(
-                "School created successfully with ID: {}",
-                savedSchool.getId()
-        );
+                "School and its administrator created. School ID: {}, Admin username: {}",
+                savedSchool.getId(),
+                admin.getUsername());
 
         return mapToResponseDto(savedSchool);
     }
-
     // =========================================================
     // GET
     // =========================================================
@@ -116,13 +160,30 @@ public class SchoolServiceImpl implements SchoolService {
     @Override
     public SchoolResponseDto getSchoolById(Long id) {
 
-        School school =
-                schoolRepository.findById(id)
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "School not found with id: " + id
-                                )
-                        );
+        org.springframework.security.core.Authentication authentication =
+                org.springframework.security.core.context.SecurityContextHolder
+                        .getContext()
+                        .getAuthentication();
+
+        boolean isSuperAdmin = authentication != null
+                && authentication.getAuthorities().stream()
+                .anyMatch(authority ->
+                        authority.getAuthority().equals("ROLE_SUPER_ADMIN"));
+
+        if (!isSuperAdmin) {
+            Long currentSchoolId = currentSchoolService.getCurrentSchoolId();
+
+            if (!currentSchoolId.equals(id)) {
+                throw new org.springframework.security.access.AccessDeniedException(
+                        "You are not allowed to access another school"
+                );
+            }
+        }
+
+        School school = schoolRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "School not found with id: " + id
+                ));
 
         return mapToResponseDto(school);
     }
@@ -145,6 +206,14 @@ public class SchoolServiceImpl implements SchoolService {
             Long id,
             SchoolRequestDto request
     ) {
+
+        Long currentSchoolId = currentSchoolService.getCurrentSchoolId();
+
+        if (!currentSchoolId.equals(id)) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "You are not allowed to update another school"
+            );
+        }
 
         School school =
                 schoolRepository.findById(id)
@@ -199,17 +268,21 @@ public class SchoolServiceImpl implements SchoolService {
 
     @Override
     public void deleteSchool(Long id) {
-
-        School school =
-                schoolRepository.findById(id)
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "School not found with id: " + id
-                                )
-                        );
-
-        schoolRepository.delete(school);
+        updateSchoolStatus(id, "INACTIVE");
     }
+//    @Override
+//    public void deleteSchool(Long id) {
+//
+//        School school =
+//                schoolRepository.findById(id)
+//                        .orElseThrow(() ->
+//                                new ResourceNotFoundException(
+//                                        "School not found with id: " + id
+//                                )
+//                        );
+//
+//        schoolRepository.delete(school);
+//    }
 
     // =========================================================
     // LOGO
@@ -220,6 +293,14 @@ public class SchoolServiceImpl implements SchoolService {
             Long id,
             MultipartFile file
     ) throws IOException {
+
+        Long currentSchoolId = currentSchoolService.getCurrentSchoolId();
+
+        if (!currentSchoolId.equals(id)) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "You are not allowed to upload a logo for another school"
+            );
+        }
 
         School school =
                 schoolRepository.findById(id)
@@ -373,12 +454,14 @@ public class SchoolServiceImpl implements SchoolService {
                                     formatter
                             );
 
-                    String code =
-                            getCellValue(
-                                    row,
-                                    1,
-                                    formatter
-                            );
+                    String code = getCellValue(row, 1, formatter);
+
+                    if (code.isBlank()) {
+                        code = "SCH-" + UUID.randomUUID()
+                                .toString()
+                                .substring(0, 8)
+                                .toUpperCase(Locale.ROOT);
+                    }
 
                     if (name.isBlank()) {
                         throw new IllegalArgumentException(
@@ -386,11 +469,6 @@ public class SchoolServiceImpl implements SchoolService {
                         );
                     }
 
-                    if (code.isBlank()) {
-                        throw new IllegalArgumentException(
-                                "code is required"
-                        );
-                    }
 
                     if (!codesInCurrentFile.add(
                             code.toUpperCase()
@@ -424,11 +502,11 @@ public class SchoolServiceImpl implements SchoolService {
 
                     } else {
 
-                        school =
-                                buildSchoolFromExcel(
-                                        row,
-                                        formatter
-                                );
+                        school = buildSchoolFromExcel(
+                                row,
+                                formatter,
+                                code
+                        );
 
                         schoolRepository.save(school);
 
@@ -475,12 +553,13 @@ public class SchoolServiceImpl implements SchoolService {
 
     private School buildSchoolFromExcel(
             Row row,
-            DataFormatter formatter
+            DataFormatter formatter,
+            String code
     ) {
 
         return School.builder()
                 .name(getCellValue(row, 0, formatter))
-                .code(getCellValue(row, 1, formatter))
+                .code(code)
                 .address(getCellValue(row, 2, formatter))
                 .affiliationNumber(
                         getCellValue(row, 3, formatter)
@@ -637,18 +716,8 @@ public class SchoolServiceImpl implements SchoolService {
         List<String> actualHeaders =
                 new ArrayList<>();
 
-        for (int i = 0;
-             i < REQUIRED_HEADERS.size();
-             i++) {
-
-            String value =
-                    getCellValue(
-                            headerRow,
-                            i,
-                            formatter
-                    );
-
-            actualHeaders.add(value);
+        for (int i = 0; i < headerRow.getLastCellNum(); i++) {
+            actualHeaders.add(getCellValue(headerRow, i, formatter));
         }
 
         for (String requiredHeader : REQUIRED_HEADERS) {
@@ -765,5 +834,79 @@ public class SchoolServiceImpl implements SchoolService {
                 .createdAt(school.getCreatedAt())
                 .updatedAt(school.getUpdatedAt())
                 .build();
+    }
+
+
+    @Override
+    @Transactional
+    public SchoolResponseDto createSchool(SchoolRequestDto request) {
+
+        logger.info(
+                "Creating school with code: {}",
+                request.getCode()
+        );
+
+        String generatedCode = "SCH-" + UUID.randomUUID()
+                .toString()
+                .substring(0, 8)
+                .toUpperCase(Locale.ROOT);
+
+        School school = School.builder()
+                .name(request.getName())
+                .code(generatedCode)
+                .phone(request.getPhone())
+                .email(request.getEmail())
+                .address(request.getAddress())
+                .city(request.getCity())
+                .state(request.getState())
+                .postalCode(request.getPostalCode())
+                .country(request.getCountry())
+                .website(request.getWebsite())
+                .logoUrl(request.getLogoUrl())
+                .principalMessage(request.getPrincipalMessage())
+                .principalName(request.getPrincipalName())
+                .facilities(request.getFacilities())
+                .facultyInfo(request.getFacultyInfo())
+                .establishmentYear(request.getEstablishmentYear())
+                .affiliationNumber(request.getAffiliationNumber())
+                .schoolType(request.getSchoolType())
+                .status(
+                        request.getStatus() != null
+                                ? request.getStatus()
+                                : "ACTIVE"
+                )
+                .build();
+
+        School savedSchool = schoolRepository.save(school);
+
+        logger.info(
+                "School created successfully with ID: {}",
+                savedSchool.getId()
+        );
+
+        return mapToResponseDto(savedSchool);
+    }
+
+    @Override
+    public SchoolResponseDto updateSchoolStatus(Long id, String status) {
+
+        if (status == null
+                || (!status.equalsIgnoreCase("ACTIVE")
+                && !status.equalsIgnoreCase("INACTIVE"))) {
+            throw new IllegalArgumentException(
+                    "Invalid school status. Allowed values: ACTIVE, INACTIVE"
+            );
+        }
+
+        School school = schoolRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "School not found with id: " + id
+                ));
+
+        school.setStatus(status.toUpperCase(java.util.Locale.ROOT));
+
+        School updatedSchool = schoolRepository.save(school);
+
+        return mapToResponseDto(updatedSchool);
     }
 }
