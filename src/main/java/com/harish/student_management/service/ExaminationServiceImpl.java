@@ -20,10 +20,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.util.Comparator;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -44,303 +41,153 @@ public class ExaminationServiceImpl implements ExaminationService {
     private final GradeRuleRepository gradeRuleRepository;
     private final SubjectRepository subjectRepository;
     private final ClassSubjectRepository classSubjectRepository;
+    private final CurrentSchoolService currentSchoolService;
+
 
     @Override
-    public ExaminationResponseDto createExamination(ExaminationRequestDto r) {
+    @Transactional
+    public ExaminationResponseDto createExamination(
+            ExaminationRequestDto r) {
+
+        if (r == null) {
+            throw new IllegalArgumentException(
+                    "Examination request is required");
+        }
+
+        if (r.getAcademicYearId() == null) {
+            throw new IllegalArgumentException(
+                    "Academic year ID is required");
+        }
+
+        if (r.getName() == null || r.getName().isBlank()) {
+            throw new IllegalArgumentException(
+                    "Examination name is required");
+        }
+
+        if (r.getExamType() == null || r.getExamType().isBlank()) {
+            throw new IllegalArgumentException(
+                    "Examination type is required");
+        }
+
+        // Must verify the academic year belongs to the current school
+        AcademicYear academicYear = findYear(r.getAcademicYearId());
+
+        String examinationName = r.getName().trim();
+
+        // Prevent duplicate examination names within the same academic year
+        boolean exists = examinationRepository
+                .findByAcademicYear_IdAndNameIgnoreCase(
+                        academicYear.getId(),
+                        examinationName)
+                .isPresent();
+
+        if (exists) {
+            throw new IllegalArgumentException(
+                    "An examination with this name already exists "
+                            + "in the selected academic year");
+        }
+
+        String status = r.getStatus() == null || r.getStatus().isBlank()
+                ? "DRAFT"
+                : r.getStatus().trim().toUpperCase(Locale.ROOT);
+
         Examination exam = Examination.builder()
-                .academicYear(findYear(r.getAcademicYearId()))
-                .name(r.getName())
+                .academicYear(academicYear)
+                .name(examinationName)
                 .description(r.getDescription())
-                .examType(r.getExamType())
+                .examType(r.getExamType().trim())
                 .year(r.getYear())
-                .status(r.getStatus())
+                .status(status)
                 .build();
 
         return examinationDto(examinationRepository.save(exam));
     }
 
+
+
     @Override
+    @Transactional
     public ExaminationResponseDto updateExamination(
             Long id,
             ExaminationRequestDto r) {
 
+        if (r == null) {
+            throw new IllegalArgumentException(
+                    "Examination request is required");
+        }
+
+        if (r.getAcademicYearId() == null) {
+            throw new IllegalArgumentException(
+                    "Academic year ID is required");
+        }
+
+        if (r.getName() == null || r.getName().isBlank()) {
+            throw new IllegalArgumentException(
+                    "Examination name is required");
+        }
+
+        if (r.getExamType() == null || r.getExamType().isBlank()) {
+            throw new IllegalArgumentException(
+                    "Examination type is required");
+        }
+
+        // Fetch only an examination belonging to the current school
         Examination exam = findExam(id);
 
-        exam.setAcademicYear(findYear(r.getAcademicYearId()));
-        exam.setName(r.getName());
-        exam.setDescription(r.getDescription());
-        exam.setExamType(r.getExamType());
-        exam.setYear(r.getYear());
-        exam.setStatus(r.getStatus());
+        // Fetch only an academic year belonging to the current school
+        AcademicYear academicYear = findYear(r.getAcademicYearId());
 
-        return examinationDto(exam);
+        String examinationName = r.getName().trim();
+
+        // Prevent duplicate names within the selected academic year,
+        // while allowing the current examination to retain its own name.
+        examinationRepository
+                .findByAcademicYear_IdAndNameIgnoreCase(
+                        academicYear.getId(),
+                        examinationName)
+                .filter(existing -> !existing.getId().equals(exam.getId()))
+                .ifPresent(existing -> {
+                    throw new IllegalArgumentException(
+                            "An examination with this name already exists "
+                                    + "in the selected academic year");
+                });
+
+        exam.setAcademicYear(academicYear);
+        exam.setName(examinationName);
+        exam.setDescription(r.getDescription());
+        exam.setExamType(r.getExamType().trim());
+        exam.setYear(r.getYear());
+
+        if (r.getStatus() != null && !r.getStatus().isBlank()) {
+            exam.setStatus(r.getStatus().trim().toUpperCase(Locale.ROOT));
+        }
+
+        Examination saved = examinationRepository.save(exam);
+
+        return examinationDto(saved);
     }
+
 
     @Override
     @Transactional(readOnly = true)
     public List<ExaminationResponseDto> getExaminations(Long yearId) {
 
-        List<Examination> exams =
-                yearId == null
-                        ? examinationRepository.findAll()
-                        : examinationRepository.findByAcademicYearId(yearId);
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        List<Examination> exams = yearId == null
+                ? examinationRepository
+                .findByAcademicYear_School_Id(schoolId)
+                : examinationRepository
+                .findByAcademicYear_IdAndAcademicYear_School_Id(
+                        yearId,
+                        schoolId
+                );
 
         return exams.stream()
                 .map(this::examinationDto)
                 .toList();
     }
 
-    /*
-     * ============================================================
-     * EXCEL IMPORT - EXAMINATIONS
-     * ============================================================
-     */
-
-//    @Override
-//    public ExaminationImportResponseDto importExaminationsExcel(
-//            MultipartFile file) {
-//
-//        if (file == null || file.isEmpty()) {
-//            throw new IllegalArgumentException("Excel file is required");
-//        }
-//
-//        String fileName = file.getOriginalFilename();
-//
-//        if (fileName == null
-//                || !fileName.toLowerCase().endsWith(".xlsx")) {
-//
-//            throw new IllegalArgumentException(
-//                    "Only .xlsx Excel files are supported"
-//            );
-//        }
-//
-//        int totalRows = 0;
-//        int created = 0;
-//        int updated = 0;
-//
-//        List<ExaminationImportErrorDto> errors =
-//                new ArrayList<>();
-//
-//        try (InputStream inputStream = file.getInputStream();
-//             Workbook workbook = new XSSFWorkbook(inputStream)) {
-//
-//            if (workbook.getNumberOfSheets() == 0) {
-//                throw new IllegalArgumentException(
-//                        "Excel file does not contain any sheet"
-//                );
-//            }
-//
-//            Sheet sheet = workbook.getSheetAt(0);
-//
-//            if (sheet.getLastRowNum() < 1) {
-//                throw new IllegalArgumentException(
-//                        "Excel file does not contain any examination data"
-//                );
-//            }
-//
-//            Row headerRow = sheet.getRow(0);
-//
-//            validateExaminationHeader(headerRow);
-//
-//            for (int rowIndex = 1;
-//                 rowIndex <= sheet.getLastRowNum();
-//                 rowIndex++) {
-//
-//                Row row = sheet.getRow(rowIndex);
-//
-//                if (isRowEmpty(row)) {
-//                    continue;
-//                }
-//
-//                totalRows++;
-//
-//                int excelRowNumber = rowIndex + 1;
-//
-//                try {
-//
-//                    Long id = getLongValue(row.getCell(0));
-//
-//                    Long academicYearId =
-//                            getLongValue(row.getCell(1));
-//
-//                    String name =
-//                            getStringValue(row.getCell(2));
-//
-//                    String description =
-//                            getStringValue(row.getCell(3));
-//
-//                    String examType =
-//                            getStringValue(row.getCell(4));
-//
-//                    Integer year =
-//                            getIntegerValue(row.getCell(5));
-//
-//                    String status =
-//                            getStringValue(row.getCell(6));
-//
-//                    /*
-//                     * Required validations
-//                     */
-//
-//                    if (name == null || name.isBlank()) {
-//                        throw new IllegalArgumentException(
-//                                "Name is required"
-//                        );
-//                    }
-//
-//                    if (examType == null || examType.isBlank()) {
-//                        throw new IllegalArgumentException(
-//                                "Exam type is required"
-//                        );
-//                    }
-//
-//                    /*
-//                     * Build request DTO.
-//                     *
-//                     * We intentionally reuse the existing
-//                     * create/update logic so manual and Excel
-//                     * operations behave consistently.
-//                     */
-//
-//                    ExaminationRequestDto request =
-//                            ExaminationRequestDto.builder()
-//                                    .academicYearId(academicYearId)
-//                                    .name(name)
-//                                    .description(description)
-//                                    .examType(examType)
-//                                    .year(year)
-//                                    .status(status)
-//                                    .build();
-//
-//                    if (id == null) {
-//
-//                        /*
-//                         * CREATE
-//                         */
-//
-//                        Examination exam =
-//                                Examination.builder()
-//                                        .academicYear(
-//                                                findYear(
-//                                                        request.getAcademicYearId()
-//                                                )
-//                                        )
-//                                        .name(request.getName())
-//                                        .description(
-//                                                request.getDescription()
-//                                        )
-//                                        .examType(
-//                                                request.getExamType()
-//                                        )
-//                                        .year(request.getYear())
-//                                        .status(request.getStatus())
-//                                        .build();
-//
-//                        examinationRepository.save(exam);
-//
-//                        created++;
-//
-//                    } else {
-//
-//                        /*
-//                         * UPDATE
-//                         */
-//
-//                        Examination exam = findExam(id);
-//
-//                        exam.setAcademicYear(
-//                                findYear(
-//                                        request.getAcademicYearId()
-//                                )
-//                        );
-//
-//                        exam.setName(request.getName());
-//                        exam.setDescription(
-//                                request.getDescription()
-//                        );
-//                        exam.setExamType(
-//                                request.getExamType()
-//                        );
-//                        exam.setYear(request.getYear());
-//                        exam.setStatus(request.getStatus());
-//
-//                        examinationRepository.save(exam);
-//
-//                        updated++;
-//                    }
-//
-//                } catch (Exception ex) {
-//
-//                    errors.add(
-//                            ExaminationImportErrorDto.builder()
-//                                    .row(excelRowNumber)
-//                                    .message(
-//                                            getErrorMessage(ex)
-//                                    )
-//                                    .build()
-//                    );
-//                }
-//            }
-//
-//        } catch (Exception ex) {
-//
-//            if (ex instanceof IllegalArgumentException) {
-//                throw (IllegalArgumentException) ex;
-//            }
-//
-//            throw new IllegalArgumentException(
-//                    "Failed to read examination Excel file: "
-//                            + getErrorMessage(ex),
-//                    ex
-//            );
-//        }
-//
-//        return ExaminationImportResponseDto.builder()
-//                .totalRows(totalRows)
-//                .created(created)
-//                .updated(updated)
-//                .errors(errors.size())
-//                .errorDetails(errors)
-//                .build();
-//    }
-
-//    private void validateExaminationHeader(Row headerRow) {
-//
-//        if (headerRow == null) {
-//            throw new IllegalArgumentException(
-//                    "Excel header row is missing"
-//            );
-//        }
-//
-//        String[] expectedHeaders = {
-//                "ID",
-//                "Academic Year ID",
-//                "Name",
-//                "Description",
-//                "Exam Type",
-//                "Year",
-//                "Status"
-//        };
-//
-//        for (int i = 0;
-//             i < expectedHeaders.length;
-//             i++) {
-//
-//            String actual =
-//                    getStringValue(headerRow.getCell(i));
-//
-//            if (!expectedHeaders[i].equalsIgnoreCase(
-//                    actual == null ? "" : actual.trim())) {
-//
-//                throw new IllegalArgumentException(
-//                        "Invalid Excel header at column "
-//                                + (i + 1)
-//                                + ". Expected: "
-//                                + expectedHeaders[i]
-//                );
-//            }
-//        }
-//    }
 
     private String getStringValue(Cell cell) {
 
@@ -475,6 +322,10 @@ public class ExaminationServiceImpl implements ExaminationService {
             Long id,
             ExamScheduleRequestDto r) {
 
+        ExamSchedule existing = findSchedule(id);
+
+// Only after this point, load existing results or modify the schedule.
+
         if (resultRepository
                 .findByExamScheduleId(id)
                 .size() > 0) {
@@ -500,36 +351,21 @@ public class ExaminationServiceImpl implements ExaminationService {
             Long sectionId,
             Long subjectId) {
 
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
         List<ExamSchedule> schedules =
-                scheduleRepository.findAll()
-                        .stream()
-                        .filter(s ->
-                                examId == null
-                                        || s.getExamination()
-                                        .getId()
-                                        .equals(examId))
-                        .filter(s ->
-                                classId == null
-                                        || s.getClassEntity()
-                                        .getId()
-                                        .equals(classId))
-                        .filter(s ->
-                                sectionId == null
-                                        || (s.getSection() != null
-                                        && s.getSection()
-                                        .getId()
-                                        .equals(sectionId)))
-                        .filter(s ->
-                                subjectId == null
-                                        || s.getSubject()
-                                        .getId()
-                                        .equals(subjectId))
-                        .toList();
+                scheduleRepository.findSchedulesForSchool(
+                        schoolId,
+                        examId,
+                        classId,
+                        sectionId,
+                        subjectId);
 
         return schedules.stream()
                 .map(this::scheduleDto)
                 .toList();
     }
+
 
     @Override
     public ExamResultResponseDto enterMarks(
@@ -537,132 +373,149 @@ public class ExaminationServiceImpl implements ExaminationService {
             String username,
             boolean admin) {
 
-        ExamSchedule schedule =
-                findSchedule(r.getExamScheduleId());
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
+        // 1. Validate request
         if (r.getMarksObtained() == null) {
-            throw new IllegalArgumentException(
-                    "Marks obtained is required"
-            );
+            throw new IllegalArgumentException("Marks obtained is required");
         }
 
-        if (schedule.getMaxMarks() == null) {
+        if (r.getStudentId() == null) {
+            throw new IllegalArgumentException("Student ID is required");
+        }
+
+        if (r.getExamScheduleId() == null) {
+            throw new IllegalArgumentException("Exam schedule ID is required");
+        }
+
+        // 2. Fetch schedule belonging to the logged-in user's school
+        ExamSchedule schedule = findSchedule(r.getExamScheduleId());
+
+        // 3. Fetch student belonging to the same school
+        Student student = studentRepository
+                .findByIdAndSection_ClassEntity_School_Id(
+                        r.getStudentId(),
+                        schoolId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException("Student not found"));
+
+        // 4. Validate student eligibility for the scheduled class
+        if (student.getSection() == null
+                || student.getSection().getClassEntity() == null
+                || schedule.getClassEntity() == null
+                || !student.getSection().getClassEntity().getId()
+                .equals(schedule.getClassEntity().getId())) {
+            throw new IllegalArgumentException(
+                    "Student does not belong to the scheduled class");
+        }
+
+        // If the schedule targets a specific section, validate it too
+        if (schedule.getSection() != null
+                && !schedule.getSection().getId()
+                .equals(student.getSection().getId())) {
+            throw new IllegalArgumentException(
+                    "Student does not belong to the scheduled section");
+        }
+
+        // 5. Validate marks against the schedule's configured maximum
+        if (schedule.getMaxMarks() == null
+                || schedule.getMaxMarks() <= 0) {
             throw new IllegalStateException(
-                    "Maximum marks are not configured for this schedule"
-            );
+                    "Maximum marks are not configured correctly for this schedule");
         }
 
         if (r.getMarksObtained() < 0) {
             throw new IllegalArgumentException(
-                    "Marks obtained cannot be negative"
-            );
+                    "Marks obtained cannot be negative");
         }
 
         if (r.getMarksObtained() > schedule.getMaxMarks()) {
             throw new IllegalArgumentException(
-                    "Marks obtained cannot exceed the schedule maximum marks"
-            );
+                    "Marks obtained cannot exceed the schedule maximum marks");
         }
 
-        Student student =
-                studentRepository.findById(r.getStudentId())
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "Student not found: "
-                                                + r.getStudentId()
-                                )
-                        );
-
+        // Keep any additional existing eligibility checks
         validateStudentScope(student, schedule);
 
-        Teacher teacher =
-                resolveMarkingTeacher(
-                        r.getTeacherId(),
-                        username,
-                        admin
-                );
+        // 6. Resolve the teacher and validate access
+        Teacher teacher = resolveMarkingTeacher(
+                r.getTeacherId(),
+                username,
+                admin);
 
         if (!admin) {
-
-            teacherAccessService
-                    .validateTeacherAccessToClassAndSubject(
-                            teacher.getId(),
-                            schedule.getClassEntity().getId(),
-                            schedule.getSubject().getId()
-                    );
+            teacherAccessService.validateTeacherAccessToClassAndSubject(
+                    teacher.getId(),
+                    schedule.getClassEntity().getId(),
+                    schedule.getSubject().getId());
         }
 
-        ExamResult result =
-                resultRepository
-                        .findByExamScheduleIdAndStudentId(
-                                schedule.getId(),
-                                student.getId()
-                        )
-                        .orElseGet(ExamResult::new);
+        // 7. Load an existing result only within this school,
+        // or create a new result for this schedule and student.
+        ExamResult result = resultRepository
+                .findByScheduleStudentAndSchool(
+                        schedule.getId(),
+                        student.getId(),
+                        schoolId)
+                .orElseGet(() -> {
+                    ExamResult newResult = new ExamResult();
+                    newResult.setExamSchedule(schedule);
+                    newResult.setStudent(student);
+                    return newResult;
+                });
 
         result.setExamSchedule(schedule);
         result.setStudent(student);
         result.setMarkedByTeacher(teacher);
-
-        result.setMarksObtained(
-                r.getMarksObtained()
-        );
-
-        result.setMaxMarks(
-                schedule.getMaxMarks()
-        );
+        result.setMarksObtained(r.getMarksObtained());
+        result.setMaxMarks(schedule.getMaxMarks());
 
         result.setPercentage(
-                round(
-                        r.getMarksObtained()
-                                * 100.0
-                                / schedule.getMaxMarks()
-                )
-        );
+                round(r.getMarksObtained() * 100.0 / schedule.getMaxMarks()));
 
-        result.setGrade(
-                gradeFor(result.getPercentage())
-        );
-
-        result.setRemarks(
-                r.getRemarks()
-        );
-
+        result.setGrade(gradeFor(result.getPercentage()));
+        result.setRemarks(r.getRemarks());
         result.setStatus(
-                r.getStatus() == null
+                r.getStatus() == null || r.getStatus().isBlank()
                         ? "ENTERED"
-                        : r.getStatus()
-        );
+                        : r.getStatus());
 
+        // Any marks update requires publication again
         result.setIsPublished(false);
         result.setPublishedAt(null);
         result.setMarkedAt(LocalDateTime.now());
 
-        ExamResult saved =
-                resultRepository.save(result);
+        // 8. Save and recalculate ranks
+        ExamResult saved = resultRepository.save(result);
 
         recalculateRanks(schedule.getId());
 
-        return resultDto(
-                resultRepository
-                        .findById(saved.getId())
-                        .orElseThrow()
-        );
+        // Re-fetch using the school-scoped repository method
+        ExamResult savedResult = resultRepository
+                .findByIdAndSchoolId(saved.getId(), schoolId)
+                .orElseThrow(() ->
+                        new IllegalStateException("Saved exam result not found"));
+
+        return resultDto(savedResult);
     }
+
 
     @Override
     @Transactional(readOnly = true)
     public List<ExamResultResponseDto> getResults(
             Long scheduleId,
             Long studentId) {
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        if (scheduleId != null) {
+            findSchedule(scheduleId);
+        }
 
         List<ExamResult> results =
                 scheduleId != null
-                        ? resultRepository
-                        .findByExamScheduleId(scheduleId)
+                        ? resultRepository.findByScheduleAndSchool(scheduleId, schoolId)
                         : studentId != null
-                        ? resultRepository
-                        .findByStudentId(studentId)
+                        ? resultRepository.findByStudentAndSchool(studentId, schoolId)
                         : resultRepository.findAll();
 
         return results.stream()
@@ -675,14 +528,12 @@ public class ExaminationServiceImpl implements ExaminationService {
             Long id,
             boolean published) {
 
-        ExamResult result =
-                resultRepository.findById(id)
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "Exam result not found: "
-                                                + id
-                                )
-                        );
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        ExamResult result = resultRepository
+                .findByIdAndSchoolId(id, schoolId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException("Result not found"));
 
         result.setIsPublished(published);
         result.setPublishedAt(
@@ -699,119 +550,121 @@ public class ExaminationServiceImpl implements ExaminationService {
         return resultDto(result);
     }
 
+
     private ExamSchedule buildSchedule(
             ExamSchedule s,
             ExamScheduleRequestDto r) {
 
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        // 1. Validate required IDs
         if (r.getExaminationId() == null) {
-            throw new IllegalArgumentException(
-                    "Examination ID is required"
-            );
-        }
-        Examination exam =
-                findExam(r.getExaminationId());
-        if (!"PUBLISHED".equalsIgnoreCase(exam.getStatus())) {
-            throw new IllegalArgumentException(
-                    "Only published examinations can be scheduled"
-            );
+            throw new IllegalArgumentException("Examination ID is required");
         }
 
         if (r.getClassId() == null) {
-            throw new IllegalArgumentException(
-                    "Class ID is required"
-            );
+            throw new IllegalArgumentException("Class ID is required");
         }
 
-        ClassEntity clazz =
-                classRepository.findById(r.getClassId())
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "Class not found: "
-                                                + r.getClassId()
-                                )
-                        );
+        if (r.getSubjectId() == null) {
+            throw new IllegalArgumentException("Subject ID is required");
+        }
 
+        if (r.getExamDate() == null) {
+            throw new IllegalArgumentException("Exam date is required");
+        }
+
+        if (r.getStartTime() == null) {
+            throw new IllegalArgumentException("Exam start time is required");
+        }
+
+        if (r.getDuration() == null || r.getDuration() <= 0) {
+            throw new IllegalArgumentException(
+                    "Exam duration must be greater than zero");
+        }
+
+        if (r.getMaxMarks() == null || r.getMaxMarks() <= 0) {
+            throw new IllegalArgumentException(
+                    "Maximum marks must be greater than zero");
+        }
+
+        // 2. Fetch examination within the authenticated school
+        Examination exam = findExam(r.getExaminationId());
+
+        if (!"PUBLISHED".equalsIgnoreCase(exam.getStatus())) {
+            throw new IllegalArgumentException(
+                    "Only published examinations can be scheduled");
+        }
+
+        // 3. Fetch class within the authenticated school
+        ClassEntity clazz = classRepository
+                .findByIdAndSchoolId(r.getClassId(), schoolId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "Class not found in this school"));
+
+        // 4. Fetch subject within the authenticated school
+        Subject subject = subjectRepository
+                .findByIdAndSchoolId(r.getSubjectId(), schoolId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "Subject not found in this school"));
+
+        // 5. Validate optional section
         Section section = null;
 
         if (r.getSectionId() != null) {
-
-            section =
-                    sectionRepository.findById(
-                            r.getSectionId()
-                    ).orElseThrow(() ->
-                            new ResourceNotFoundException(
-                                    "Section not found: "
-                                            + r.getSectionId()
-                            )
-                    );
+            section = sectionRepository
+                    .findByIdWithClassAndSchool(r.getSectionId())
+                    .orElseThrow(() ->
+                            new IllegalArgumentException(
+                                    "Section not found"));
 
             if (section.getClassEntity() == null
-                    || !section.getClassEntity()
-                    .getId()
-                    .equals(clazz.getId())) {
+                    || section.getClassEntity().getSchool() == null
+                    || !section.getClassEntity().getId()
+                    .equals(clazz.getId())
+                    || !section.getClassEntity().getSchool().getId()
+                    .equals(schoolId)) {
 
                 throw new IllegalArgumentException(
-                        "Section does not belong to the selected class"
-                );
+                        "Section does not belong to the selected class "
+                                + "in this school");
             }
         }
 
-        Subject subject =
-                subjectRepository.findById(r.getSubjectId())
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "Subject not found: "
-                                                + r.getSubjectId()
-                                )
-                        );
-
-        if (subject.getSchool() == null
-                || clazz.getSchool() == null
-                || !subject.getSchool()
-                .getId()
-                .equals(clazz.getSchool().getId())) {
-
-            throw new IllegalArgumentException(
-                    "Subject does not belong to the same school as the class"
-            );
-        }
-
+        // 6. Verify that the subject is assigned to the selected class
         boolean assignedToClass =
                 classSubjectRepository
                         .existsByClassEntityIdAndSubjectId(
                                 clazz.getId(),
-                                subject.getId()
-                        );
+                                subject.getId());
 
         if (!assignedToClass) {
-
             throw new IllegalArgumentException(
-                    "Subject is not assigned to the selected class"
-            );
+                    "Subject is not assigned to the selected class");
         }
 
+        // 7. Validate optional teacher
         Teacher teacher = null;
 
         if (r.getSubjectTeacherId() != null) {
-
-            teacher =
-                    teacherRepository.findById(
-                            r.getSubjectTeacherId()
-                    ).orElseThrow(() ->
-                            new ResourceNotFoundException(
-                                    "Teacher not found: "
-                                            + r.getSubjectTeacherId()
-                            )
-                    );
+            teacher = teacherRepository
+                    .findByIdAndSchoolId(
+                            r.getSubjectTeacherId(),
+                            schoolId)
+                    .orElseThrow(() ->
+                            new IllegalArgumentException(
+                                    "Teacher not found in this school"));
 
             teacherAccessService
                     .validateTeacherAccessToClassAndSubject(
                             teacher.getId(),
                             clazz.getId(),
-                            subject.getId()
-                    );
+                            subject.getId());
         }
 
+        // 8. Build/update schedule
         s.setExamination(exam);
         s.setClassEntity(clazz);
         s.setSection(section);
@@ -825,13 +678,13 @@ public class ExaminationServiceImpl implements ExaminationService {
         s.setRoomNumber(r.getRoomNumber());
 
         s.setStatus(
-                r.getStatus() == null
+                r.getStatus() == null || r.getStatus().isBlank()
                         ? "SCHEDULED"
-                        : r.getStatus()
-        );
+                        : r.getStatus().trim());
 
         return s;
     }
+
 
     private Teacher resolveMarkingTeacher(
             Long requested,
@@ -892,49 +745,58 @@ public class ExaminationServiceImpl implements ExaminationService {
         }
     }
 
+
     private void recalculateRanks(Long scheduleId) {
 
-        List<ExamResult> results =
-                resultRepository
-                        .findByExamScheduleId(scheduleId)
-                        .stream()
-                        .filter(r -> r.getMarksObtained() != null)
-                        .toList();
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
-        List<ExamResult> classOrder =
-                results.stream()
-                        .sorted(
-                                Comparator.comparing(
-                                        ExamResult::getPercentage
-                                ).reversed()
+        // Validate that the schedule belongs to the authenticated school
+        ExamSchedule schedule = findSchedule(scheduleId);
+
+        List<ExamResult> results = resultRepository
+                .findByScheduleAndSchool(schedule.getId(), schoolId)
+                .stream()
+                .filter(r -> r.getMarksObtained() != null)
+                .filter(r -> r.getPercentage() != null)
+                .toList();
+
+        // Overall class rank
+        List<ExamResult> classOrder = results.stream()
+                .sorted(
+                        Comparator.comparing(
+                                ExamResult::getPercentage,
+                                Comparator.nullsLast(Comparator.reverseOrder())
                         )
-                        .toList();
+                )
+                .toList();
 
         rank(classOrder, false);
 
+        // Section-wise rank
         results.stream()
-                .filter(r ->
-                        r.getStudent().getSection() != null)
-                .collect(
-                        Collectors.groupingBy(
-                                r -> r.getStudent()
-                                        .getSection()
-                                        .getId()
-                        )
-                )
+                .filter(r -> r.getStudent() != null)
+                .filter(r -> r.getStudent().getSection() != null)
+                .collect(Collectors.groupingBy(
+                        r -> r.getStudent().getSection().getId()
+                ))
                 .values()
-                .forEach(group ->
-                        rank(
-                                group.stream()
-                                        .sorted(
-                                                Comparator.comparing(
-                                                        ExamResult::getPercentage
-                                                ).reversed()
-                                        )
-                                        .toList(),
-                                true
-                        )
-                );
+                .forEach(group -> {
+                    List<ExamResult> sectionOrder = group.stream()
+                            .sorted(
+                                    Comparator.comparing(
+                                            ExamResult::getPercentage,
+                                            Comparator.nullsLast(
+                                                    Comparator.reverseOrder()
+                                            )
+                                    )
+                            )
+                            .toList();
+
+                    rank(sectionOrder, true);
+                });
+
+        // Persist recalculated ranks
+        resultRepository.saveAll(results);
     }
 
     private void rank(
@@ -967,8 +829,9 @@ public class ExaminationServiceImpl implements ExaminationService {
 
     private String gradeFor(Double percentage) {
 
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
         return gradeRuleRepository
-                .findAllByOrderByMinimumPercentageDesc()
+                .findAllBySchool_IdOrderByMinimumPercentageDesc(schoolId)
                 .stream()
                 .filter(g ->
                         percentage >= g.getMinimumPercentage()
@@ -985,37 +848,41 @@ public class ExaminationServiceImpl implements ExaminationService {
 
     private AcademicYear findYear(Long id) {
 
-        return id == null
-                ? null
-                : academicYearRepository.findById(id)
+        if (id == null) {
+            return null;
+        }
+
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        return academicYearRepository
+                .findByIdAndSchool_Id(id, schoolId)
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
-                                "Academic year not found: "
-                                        + id
+                                "Academic year not found for current school: " + id
                         )
                 );
     }
 
     private Examination findExam(Long id) {
 
-        return examinationRepository.findById(id)
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        return examinationRepository
+                .findByIdAndAcademicYear_School_Id(id, schoolId)
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
-                                "Examination not found: "
-                                        + id
+                                "Examination not found for current school: " + id
                         )
                 );
     }
 
     private ExamSchedule findSchedule(Long id) {
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
-        return scheduleRepository.findById(id)
+        return scheduleRepository.findByIdAndSchoolId(id, schoolId)
                 .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "Exam schedule not found: "
-                                        + id
-                        )
-                );
+                        new IllegalArgumentException(
+                                "Exam schedule not found"));
     }
 
     private ExaminationResponseDto examinationDto(
@@ -1153,228 +1020,17 @@ public class ExaminationServiceImpl implements ExaminationService {
     }
 
 
-//    @Override
-//    @Transactional
-//    public ExamResultImportResponseDto importExamResultsExcel(
-//            MultipartFile file) {
-//
-//        List<ExamResultImportErrorDto> errors = new ArrayList<>();
-//
-//        int totalRows = 0;
-//        int created = 0;
-//        int updated = 0;
-//
-//        if (file == null || file.isEmpty()) {
-//            throw new IllegalArgumentException("Excel file is empty");
-//        }
-//
-//        String filename = file.getOriginalFilename();
-//
-//        if (filename == null
-//                || !filename.toLowerCase().endsWith(".xlsx")) {
-//            throw new IllegalArgumentException(
-//                    "Only .xlsx Excel files are supported"
-//            );
-//        }
-//
-//        try (InputStream inputStream = file.getInputStream();
-//             Workbook workbook = new XSSFWorkbook(inputStream)) {
-//
-//            Sheet sheet = workbook.getSheetAt(0);
-//
-//            if (sheet == null) {
-//                throw new IllegalArgumentException(
-//                        "Excel sheet is missing"
-//                );
-//            }
-//
-//            Row headerRow = sheet.getRow(0);
-//
-//            if (headerRow == null) {
-//                throw new IllegalArgumentException(
-//                        "Excel header row is missing"
-//                );
-//            }
-//
-//            validateExamResultHeader(headerRow);
-//
-//            for (int rowIndex = 1;
-//                 rowIndex <= sheet.getLastRowNum();
-//                 rowIndex++) {
-//
-//                Row row = sheet.getRow(rowIndex);
-//
-//                if (isRowEmpty(row)) {
-//                    continue;
-//                }
-//
-//                totalRows++;
-//
-//                int excelRowNumber = rowIndex + 1;
-//
-//                try {
-//
-//                    Long id = getLongValue(
-//                            row.getCell(0)
-//                    );
-//
-//                    Long examScheduleId = getLongValue(
-//                            row.getCell(1)
-//                    );
-//
-//                    Long studentId = getLongValue(
-//                            row.getCell(2)
-//                    );
-//
-//                    Long teacherId = getLongValue(
-//                            row.getCell(3)
-//                    );
-//
-//                    Integer marksObtained = getIntegerValue(
-//                            row.getCell(4)
-//                    );
-//
-//                    String remarks = getStringValue(
-//                            row.getCell(5)
-//                    );
-//
-//                    String status = getStringValue(
-//                            row.getCell(6)
-//                    );
-//
-//                    if (examScheduleId == null) {
-//                        throw new IllegalArgumentException(
-//                                "Exam Schedule ID is required"
-//                        );
-//                    }
-//
-//                    if (studentId == null) {
-//                        throw new IllegalArgumentException(
-//                                "Student ID is required"
-//                        );
-//                    }
-//
-//                    if (marksObtained == null) {
-//                        throw new IllegalArgumentException(
-//                                "Marks Obtained is required"
-//                        );
-//                    }
-//
-//                    if (marksObtained < 0) {
-//                        throw new IllegalArgumentException(
-//                                "Marks cannot be negative"
-//                        );
-//                    }
-//
-//                    /*
-//                     * Reuse existing enterMarks() logic.
-//                     *
-//                     * Excel import is performed by SCHOOL_ADMIN,
-//                     * therefore admin = true.
-//                     */
-//                    ExamResultRequestDto request =
-//                            ExamResultRequestDto.builder()
-//                                    .examScheduleId(examScheduleId)
-//                                    .studentId(studentId)
-//                                    .teacherId(teacherId)
-//                                    .marksObtained(marksObtained)
-//                                    .remarks(remarks)
-//                                    .status(status)
-//                                    .build();
-//
-//                    /*
-//                     * Check whether result already exists before
-//                     * calling enterMarks(), because enterMarks()
-//                     * performs an upsert.
-//                     */
-//                    boolean alreadyExists =
-//                            resultRepository
-//                                    .findByExamScheduleIdAndStudentId(
-//                                            examScheduleId,
-//                                            studentId
-//                                    )
-//                                    .isPresent();
-//
-//                    enterMarks(
-//                            request,
-//                            null,
-//                            true
-//                    );
-//
-//                    if (alreadyExists) {
-//                        updated++;
-//                    } else {
-//                        created++;
-//                    }
-//
-//                } catch (Exception e) {
-//
-//                    errors.add(
-//                            ExamResultImportErrorDto.builder()
-//                                    .row(excelRowNumber)
-//                                    .message(getErrorMessage(e))
-//                                    .build()
-//                    );
-//                }
-//            }
-//
-//        } catch (Exception e) {
-//
-//            if (e instanceof IllegalArgumentException) {
-//                throw (IllegalArgumentException) e;
-//            }
-//
-//            throw new IllegalArgumentException(
-//                    "Failed to read Excel file: "
-//                            + getErrorMessage(e)
-//            );
-//        }
-//
-//        return ExamResultImportResponseDto.builder()
-//                .totalRows(totalRows)
-//                .created(created)
-//                .updated(updated)
-//                .errors(errors.size())
-//                .errorDetails(errors)
-//                .build();
-//    }
-//
-//
-//    private void validateExamResultHeader(Row headerRow) {
-//
-//        String[] expectedHeaders = {
-//                "ID",
-//                "Exam Schedule ID",
-//                "Student ID",
-//                "Teacher ID",
-//                "Marks Obtained",
-//                "Remarks",
-//                "Status"
-//        };
-//
-//        for (int i = 0; i < expectedHeaders.length; i++) {
-//
-//            String actual =
-//                    getStringValue(headerRow.getCell(i));
-//
-//            if (!expectedHeaders[i].equalsIgnoreCase(actual)) {
-//                throw new IllegalArgumentException(
-//                        "Invalid Excel header at column "
-//                                + (i + 1)
-//                                + ". Expected: "
-//                                + expectedHeaders[i]
-//                );
-//            }
-//        }
-//    }
+
+
 
 
     @Override
     @Transactional
     public GradeRuleImportResponseDto importGradeRulesExcel(MultipartFile file) {
 
-        List<GradeRuleImportErrorDto> errors = new ArrayList<>();
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
+        List<GradeRuleImportErrorDto> errors = new ArrayList<>();
         int totalRows = 0;
         int created = 0;
         int updated = 0;
@@ -1385,28 +1041,32 @@ public class ExaminationServiceImpl implements ExaminationService {
 
         String filename = file.getOriginalFilename();
 
-        if (filename == null || !filename.toLowerCase().endsWith(".xlsx")) {
-            throw new IllegalArgumentException("Only .xlsx Excel files are supported");
+        if (filename == null
+                || !filename.toLowerCase(Locale.ROOT).endsWith(".xlsx")) {
+            throw new IllegalArgumentException(
+                    "Only .xlsx Excel files are supported");
         }
 
         try (InputStream inputStream = file.getInputStream();
              Workbook workbook = new XSSFWorkbook(inputStream)) {
 
-            Sheet sheet = workbook.getSheetAt(0);
-
-            if (sheet == null) {
+            if (workbook.getNumberOfSheets() == 0) {
                 throw new IllegalArgumentException("Excel sheet is missing");
             }
 
+            Sheet sheet = workbook.getSheetAt(0);
             Row headerRow = sheet.getRow(0);
 
             if (headerRow == null) {
-                throw new IllegalArgumentException("Excel header row is missing");
+                throw new IllegalArgumentException(
+                        "Excel header row is missing");
             }
 
             validateGradeRuleHeader(headerRow);
 
-            for (int rowIndex = 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
+            for (int rowIndex = 1;
+                 rowIndex <= sheet.getLastRowNum();
+                 rowIndex++) {
 
                 Row row = sheet.getRow(rowIndex);
 
@@ -1415,99 +1075,106 @@ public class ExaminationServiceImpl implements ExaminationService {
                 }
 
                 totalRows++;
-
                 int excelRowNumber = rowIndex + 1;
 
                 try {
-
                     Long id = getLongValue(row.getCell(0));
-
                     String grade = getStringValue(row.getCell(1));
-
                     Double minimumPercentage = getDoubleValue(row.getCell(2));
-
                     Double maximumPercentage = getDoubleValue(row.getCell(3));
 
+                    // Validate required fields
                     if (grade == null || grade.isBlank()) {
                         throw new IllegalArgumentException("Grade is required");
                     }
 
+                    grade = grade.trim();
+
                     if (minimumPercentage == null) {
                         throw new IllegalArgumentException(
-                                "Minimum Percentage is required"
-                        );
+                                "Minimum Percentage is required");
                     }
 
                     if (maximumPercentage == null) {
                         throw new IllegalArgumentException(
-                                "Maximum Percentage is required"
-                        );
+                                "Maximum Percentage is required");
                     }
 
-                    if (minimumPercentage < 0 || minimumPercentage > 100) {
+                    // Validate percentage range
+                    if (!Double.isFinite(minimumPercentage)
+                            || minimumPercentage < 0
+                            || minimumPercentage > 100) {
                         throw new IllegalArgumentException(
-                                "Minimum Percentage must be between 0 and 100"
-                        );
+                                "Minimum Percentage must be between 0 and 100");
                     }
 
-                    if (maximumPercentage < 0 || maximumPercentage > 100) {
+                    if (!Double.isFinite(maximumPercentage)
+                            || maximumPercentage < 0
+                            || maximumPercentage > 100) {
                         throw new IllegalArgumentException(
-                                "Maximum Percentage must be between 0 and 100"
-                        );
+                                "Maximum Percentage must be between 0 and 100");
                     }
 
                     if (minimumPercentage > maximumPercentage) {
                         throw new IllegalArgumentException(
-                                "Minimum Percentage cannot exceed Maximum Percentage"
-                        );
+                                "Minimum Percentage cannot exceed Maximum Percentage");
                     }
 
+                    // Load only this school's existing rule when updating
                     GradeRule gradeRule;
 
-                    if (id == null) {
-
-                        gradeRule = GradeRule.builder()
-                                .grade(grade.trim())
-                                .minimumPercentage(minimumPercentage)
-                                .maximumPercentage(maximumPercentage)
-                                .build();
-
-                        validateGradeRuleOverlap(
-                                minimumPercentage,
-                                maximumPercentage,
-                                null
-                        );
-
-                        gradeRuleRepository.save(gradeRule);
-
-                        created++;
-
-                    } else {
-
-                        gradeRule = gradeRuleRepository.findById(id)
+                    if (id != null) {
+                        gradeRule = gradeRuleRepository
+                                .findByIdAndSchool_Id(id, schoolId)
                                 .orElseThrow(() ->
                                         new IllegalArgumentException(
-                                                "Grade Rule not found with ID: " + id
-                                        )
-                                );
+                                                "Grade rule not found in this school"));
+                    } else {
+                        gradeRule = GradeRule.builder()
+                                .school(currentSchoolService.getCurrentSchool())
+                                .build();
+                    }
 
-                        validateGradeRuleOverlap(
-                                minimumPercentage,
-                                maximumPercentage,
-                                id
-                        );
+                    // Prevent duplicate grade names in the same school.
+                    // Exclude the current rule when updating.
+                    boolean duplicateGrade =
+                            gradeRuleRepository
+                                    .existsBySchool_IdAndGradeIgnoreCase(
+                                            schoolId, grade)
+                                    && (id == null
+                                    || gradeRuleRepository
+                                    .findBySchool_IdAndGradeIgnoreCase(
+                                            schoolId, grade)
+                                    .map(existing ->
+                                            !existing.getId().equals(id))
+                                    .orElse(false));
 
-                        gradeRule.setGrade(grade.trim());
-                        gradeRule.setMinimumPercentage(minimumPercentage);
-                        gradeRule.setMaximumPercentage(maximumPercentage);
+                    if (duplicateGrade) {
+                        throw new IllegalArgumentException(
+                                "Grade already exists in this school: " + grade);
+                    }
 
-                        gradeRuleRepository.save(gradeRule);
+                    // Prevent overlapping ranges with other rules in this school.
+                    validateGradeRuleOverlap(
+                            schoolId,
+                            minimumPercentage,
+                            maximumPercentage,
+                            id
+                    );
 
+                    gradeRule.setGrade(grade);
+                    gradeRule.setMinimumPercentage(minimumPercentage);
+                    gradeRule.setMaximumPercentage(maximumPercentage);
+
+                    gradeRuleRepository.save(gradeRule);
+
+                    if (id == null) {
+                        created++;
+                    } else {
                         updated++;
                     }
 
                 } catch (Exception e) {
-
                     errors.add(
                             GradeRuleImportErrorDto.builder()
                                     .row(excelRowNumber)
@@ -1517,15 +1184,11 @@ public class ExaminationServiceImpl implements ExaminationService {
                 }
             }
 
+        } catch (IllegalArgumentException e) {
+            throw e;
         } catch (Exception e) {
-
-            if (e instanceof IllegalArgumentException) {
-                throw (IllegalArgumentException) e;
-            }
-
             throw new IllegalArgumentException(
-                    "Failed to read Excel file: " + getErrorMessage(e)
-            );
+                    "Failed to read Excel file: " + getErrorMessage(e), e);
         }
 
         return GradeRuleImportResponseDto.builder()
@@ -1561,11 +1224,13 @@ public class ExaminationServiceImpl implements ExaminationService {
     }
 
     private void validateGradeRuleOverlap(
+            Long schoolId,
             Double minimumPercentage,
             Double maximumPercentage,
             Long currentId) {
 
-        boolean overlaps = gradeRuleRepository.findAll()
+        boolean overlaps = gradeRuleRepository
+                .findAllBySchool_Id(schoolId)
                 .stream()
                 .anyMatch(existing -> {
 
@@ -1574,8 +1239,10 @@ public class ExaminationServiceImpl implements ExaminationService {
                         return false;
                     }
 
-                    return minimumPercentage <= existing.getMaximumPercentage()
-                            && maximumPercentage >= existing.getMinimumPercentage();
+                    return minimumPercentage
+                            <= existing.getMaximumPercentage()
+                            && maximumPercentage
+                            >= existing.getMinimumPercentage();
                 });
 
         if (overlaps) {
@@ -1584,7 +1251,6 @@ public class ExaminationServiceImpl implements ExaminationService {
             );
         }
     }
-
 
     private Double getDoubleValue(Cell cell) {
 
@@ -1628,217 +1294,6 @@ public class ExaminationServiceImpl implements ExaminationService {
 
 
 
-//    @Override
-//    @Transactional
-//    public ExamScheduleImportResponseDto importExamSchedulesExcel(MultipartFile file) {
-//
-//        List<ExamScheduleImportErrorDto> errors = new ArrayList<>();
-//
-//        int totalRows = 0;
-//        int created = 0;
-//        int updated = 0;
-//
-//        if (file == null || file.isEmpty()) {
-//            throw new IllegalArgumentException("Excel file is empty");
-//        }
-//
-//        String filename = file.getOriginalFilename();
-//
-//        if (filename == null || !filename.toLowerCase().endsWith(".xlsx")) {
-//            throw new IllegalArgumentException("Only .xlsx Excel files are supported");
-//        }
-//
-//        try (InputStream inputStream = file.getInputStream();
-//             Workbook workbook = new XSSFWorkbook(inputStream)) {
-//
-//            Sheet sheet = workbook.getSheetAt(0);
-//
-//            if (sheet == null) {
-//                throw new IllegalArgumentException("Excel sheet is missing");
-//            }
-//
-//            Row headerRow = sheet.getRow(0);
-//
-//            if (headerRow == null) {
-//                throw new IllegalArgumentException("Excel header row is missing");
-//            }
-//
-//            validateExamScheduleHeader(headerRow);
-//
-//            for (int rowIndex = 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
-//
-//                Row row = sheet.getRow(rowIndex);
-//
-//                if (isRowEmpty(row)) {
-//                    continue;
-//                }
-//
-//                totalRows++;
-//
-//                int excelRowNumber = rowIndex + 1;
-//
-//                try {
-//
-//                    Long id = getLongValue(row.getCell(0));
-//                    Long examinationId = getLongValue(row.getCell(1));
-//                    Long classId = getLongValue(row.getCell(2));
-//                    Long sectionId = getLongValue(row.getCell(3));
-//                    Long subjectId = getLongValue(row.getCell(4));
-//                    Long teacherId = getLongValue(row.getCell(5));
-//
-//                    LocalDate examDate = getLocalDateValue(row.getCell(6));
-//                    LocalTime startTime = getLocalTimeValue(row.getCell(7));
-//
-//                    Integer duration = getIntegerValue(row.getCell(8));
-//                    Integer maxMarks = getIntegerValue(row.getCell(9));
-//
-//                    String examType = getStringValue(row.getCell(10));
-//                    String roomNumber = getStringValue(row.getCell(11));
-//                    String status = getStringValue(row.getCell(12));
-//
-//                    if (examinationId == null) {
-//                        throw new IllegalArgumentException(
-//                                "Examination ID is required"
-//                        );
-//                    }
-//
-//                    if (classId == null) {
-//                        throw new IllegalArgumentException(
-//                                "Class ID is required"
-//                        );
-//                    }
-//
-//                    if (subjectId == null) {
-//                        throw new IllegalArgumentException(
-//                                "Subject ID is required"
-//                        );
-//                    }
-//
-//                    if (examDate == null) {
-//                        throw new IllegalArgumentException(
-//                                "Exam Date is required"
-//                        );
-//                    }
-//
-//                    if (startTime == null) {
-//                        throw new IllegalArgumentException(
-//                                "Start Time is required"
-//                        );
-//                    }
-//
-//                    if (duration == null) {
-//                        throw new IllegalArgumentException(
-//                                "Duration is required"
-//                        );
-//                    }
-//
-//                    if (maxMarks == null) {
-//                        throw new IllegalArgumentException(
-//                                "Max Marks is required"
-//                        );
-//                    }
-//
-//                    if (examType == null || examType.isBlank()) {
-//                        throw new IllegalArgumentException(
-//                                "Exam Type is required"
-//                        );
-//                    }
-//
-//                    ExamScheduleRequestDto request =
-//                            ExamScheduleRequestDto.builder()
-//                                    .examinationId(examinationId)
-//                                    .classId(classId)
-//                                    .sectionId(sectionId)
-//                                    .subjectTeacherId(teacherId)
-//                                    .subjectId(subjectId)
-//                                    .examDate(examDate)
-//                                    .startTime(startTime)
-//                                    .duration(duration)
-//                                    .maxMarks(maxMarks)
-//                                    .examType(examType)
-//                                    .roomNumber(roomNumber)
-//                                    .status(status)
-//                                    .build();
-//
-//                    if (id == null) {
-//
-//                        createSchedule(request);
-//
-//                        created++;
-//
-//                    } else {
-//
-//                        findSchedule(id);
-//
-//                        updateSchedule(id, request);
-//
-//                        updated++;
-//                    }
-//
-//                } catch (Exception e) {
-//
-//                    errors.add(
-//                            ExamScheduleImportErrorDto.builder()
-//                                    .row(excelRowNumber)
-//                                    .message(getErrorMessage(e))
-//                                    .build()
-//                    );
-//                }
-//            }
-//
-//        } catch (Exception e) {
-//
-//            if (e instanceof IllegalArgumentException) {
-//                throw (IllegalArgumentException) e;
-//            }
-//
-//            throw new IllegalArgumentException(
-//                    "Failed to read Excel file: " + getErrorMessage(e)
-//            );
-//        }
-//
-//        return ExamScheduleImportResponseDto.builder()
-//                .totalRows(totalRows)
-//                .created(created)
-//                .updated(updated)
-//                .errors(errors.size())
-//                .errorDetails(errors)
-//                .build();
-//    }
-//
-//
-//
-//    private void validateExamScheduleHeader(Row headerRow) {
-//
-//        String[] expectedHeaders = {
-//                "ID",
-//                "Examination ID",
-//                "Class ID",
-//                "Section ID",
-//                "Subject ID",
-//                "Teacher ID",
-//                "Exam Date",
-//                "Start Time",
-//                "Duration",
-//                "Max Marks",
-//                "Exam Type",
-//                "Room Number",
-//                "Status"
-//        };
-//
-//        for (int i = 0; i < expectedHeaders.length; i++) {
-//
-//            String actual = getStringValue(headerRow.getCell(i));
-//
-//            if (!expectedHeaders[i].equalsIgnoreCase(actual)) {
-//
-//                throw new IllegalArgumentException(
-//                        "Invalid Excel header at column " + (i + 1)
-//                                + ". Expected: " + expectedHeaders[i]
-//                );
-//            }
-//        }
-//    }
 
     private LocalDate getLocalDateValue(Cell cell) {
 
@@ -1947,6 +1402,7 @@ public class ExaminationServiceImpl implements ExaminationService {
         return null;
     }
 
+
     @Override
     @Transactional(readOnly = true)
     public Page<ExamScheduleResponseDto> getExamScheduleReport(
@@ -1954,14 +1410,24 @@ public class ExaminationServiceImpl implements ExaminationService {
             LocalDate to,
             Pageable pageable) {
 
-        if (to.isBefore(from)) {
+        if (from == null || to == null) {
             throw new IllegalArgumentException(
-                    "End date must not precede start date"
-            );
+                    "Start date and end date are required");
         }
 
+        if (to.isBefore(from)) {
+            throw new IllegalArgumentException(
+                    "End date must not precede start date");
+        }
+
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
         return scheduleRepository
-                .findByExamDateBetween(from, to, pageable)
+                .findReportBySchoolAndExamDateBetween(
+                        schoolId,
+                        from,
+                        to,
+                        pageable)
                 .map(this::scheduleDto);
     }
 
@@ -1970,9 +1436,9 @@ public class ExaminationServiceImpl implements ExaminationService {
     @Transactional(readOnly = true)
     public Page<ExamResultResponseDto> getAcademicPerformanceReport(
             Pageable pageable) {
-
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
         return resultRepository
-                .findAll(pageable)
+                .findAllBySchool(schoolId, pageable)
                 .map(this::resultDto);
     }
 
@@ -1984,25 +1450,32 @@ public class ExaminationServiceImpl implements ExaminationService {
             Pageable pageable,
             boolean staff) {
 
-        if (!studentRepository.existsById(studentId)) {
-            throw new ResourceNotFoundException(
-                    "Student not found: " + studentId
-            );
-        }
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
-        Page<ExamResult> resultPage =
-                staff
-                        ? resultRepository.findByStudentId(
+        // Verify that the student belongs to the authenticated school
+        studentRepository
+                .findByIdAndSection_ClassEntity_School_Id(
                         studentId,
-                        pageable
-                )
-                        : resultRepository.findByStudentIdAndIsPublishedTrue(
-                        studentId,
-                        pageable
-                );
+                        schoolId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Student not found in this school: " + studentId));
+
+        // Fetch only this school's results.
+        // Staff can see all results; non-staff can see published results only.
+        Page<ExamResult> resultPage = staff
+                ? resultRepository.findStudentReportBySchool(
+                studentId,
+                schoolId,
+                pageable)
+                : resultRepository.findPublishedByStudentAndSchool(
+                studentId,
+                schoolId,
+                pageable);
 
         return resultPage.map(this::resultDto);
     }
+
 
 
     @Override
@@ -2011,10 +1484,23 @@ public class ExaminationServiceImpl implements ExaminationService {
             Long classId,
             Pageable pageable) {
 
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        // Verify that the class belongs to the logged-in user's school
+        classRepository.findByIdAndSchoolId(classId, schoolId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "Class not found in this school"));
+
+        // Fetch only schedules belonging to this school and class
         return scheduleRepository
-                .findByClassEntityId(classId, pageable)
+                .findReportBySchoolAndClassId(
+                        schoolId,
+                        classId,
+                        pageable)
                 .map(this::scheduleDto);
     }
+
 
 
 
@@ -2024,26 +1510,21 @@ public class ExaminationServiceImpl implements ExaminationService {
             Long examinationId,
             boolean published) {
 
-        if (!studentRepository.existsById(studentId)) {
-            throw new ResourceNotFoundException(
-                    "Student not found: " + studentId
-            );
-        }
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        Student student = studentRepository
+                .findByIdAndSection_ClassEntity_School_Id(studentId, schoolId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException("Student not found"));
 
         Examination examination = findExam(examinationId);
 
         List<ExamResult> results =
-                resultRepository.findByStudentId(studentId)
+                resultRepository.findByStudentAndSchool(studentId, schoolId)
                         .stream()
-                        .filter(result ->
-                                result.getExamSchedule() != null
-                                        && result.getExamSchedule()
-                                        .getExamination() != null
-                                        && result.getExamSchedule()
-                                        .getExamination()
-                                        .getId()
-                                        .equals(examination.getId())
-                        )
+                        .filter(r -> r.getExamSchedule()
+                                .getExamination().getId()
+                                .equals(examination.getId()))
                         .toList();
 
         LocalDateTime now = LocalDateTime.now();
@@ -2063,43 +1544,52 @@ public class ExaminationServiceImpl implements ExaminationService {
                 .toList();
     }
 
+
     @Override
+    @Transactional
     public List<ExamResultResponseDto> setExaminationResultsPublication(
             Long examinationId,
             boolean published) {
 
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        // Only an examination belonging to this school is accepted
         Examination examination = findExam(examinationId);
 
-        List<ExamResult> results =
-                resultRepository.findAll()
-                        .stream()
-                        .filter(result ->
-                                result.getExamSchedule() != null
-                                        && result.getExamSchedule()
-                                        .getExamination() != null
-                                        && result.getExamSchedule()
-                                        .getExamination()
-                                        .getId()
-                                        .equals(examination.getId())
-                        )
-                        .toList();
+        // These schedules belong to the already validated examination
+        List<ExamSchedule> schedules =
+                scheduleRepository.findByExaminationId(examination.getId());
+
+        List<ExamResult> results = new ArrayList<>();
+
+        for (ExamSchedule schedule : schedules) {
+
+            // Never load results globally across all schools
+            List<ExamResult> scheduleResults =
+                    resultRepository.findByScheduleAndSchool(
+                            schedule.getId(),
+                            schoolId
+                    );
+
+            results.addAll(scheduleResults);
+        }
 
         LocalDateTime now = LocalDateTime.now();
 
         for (ExamResult result : results) {
             result.setIsPublished(published);
-            result.setPublishedAt(
-                    published ? now : null
-            );
-            result.setStatus(
-                    published ? "PUBLISHED" : "ENTERED"
-            );
+            result.setPublishedAt(published ? now : null);
+            result.setStatus(published ? "PUBLISHED" : "ENTERED");
         }
 
-        return results.stream()
+        // Persist publication changes
+        List<ExamResult> savedResults = resultRepository.saveAll(results);
+
+        return savedResults.stream()
                 .map(this::resultDto)
                 .toList();
     }
+
 
 
 }

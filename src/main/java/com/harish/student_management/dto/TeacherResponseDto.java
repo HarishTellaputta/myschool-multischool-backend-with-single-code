@@ -23,6 +23,7 @@ public class TeacherResponseDto {
 
     private String employeeId;
     private String name;
+    private String surname;
     private String email;
     private String phone;
 

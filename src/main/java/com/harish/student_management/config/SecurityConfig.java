@@ -81,6 +81,10 @@ public class SecurityConfig {
                                 .requestMatchers("/actuator/**")
                                 .hasRole("SCHOOL_ADMIN")
 
+                                // Super Admin: create a school and its admin account
+                                .requestMatchers("/api/v1/schools/with-admin")
+                                .hasRole("SUPER_ADMIN")
+
                                 // School Admin endpoints
                                 .requestMatchers("/api/v1/schools/**")
                                 .hasRole("SCHOOL_ADMIN")

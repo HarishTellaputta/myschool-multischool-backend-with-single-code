@@ -4,6 +4,7 @@
 import com.harish.student_management.dto.*;
 import com.harish.student_management.entity.GradeRule;
 import com.harish.student_management.repository.GradeRuleRepository;
+import com.harish.student_management.service.CurrentSchoolService;
 import com.harish.student_management.service.ExamImportService;
 import com.harish.student_management.service.ExaminationService;
 import jakarta.validation.Valid;
@@ -24,6 +25,7 @@ public class ExaminationController {
     private final ExaminationService examinationService;
     private final GradeRuleRepository gradeRuleRepository;
     private final ExamImportService examImportService;
+    private final CurrentSchoolService currentSchoolService;
 
     // =========================================================
     // EXAMINATIONS
@@ -169,9 +171,10 @@ public class ExaminationController {
     @GetMapping("/grade-rules")
     @PreAuthorize("hasAnyRole('SCHOOL_ADMIN','TEACHER','PARENT','STUDENT')")
     public List<GradeRule> gradeRules() {
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
         return gradeRuleRepository
-                .findAllByOrderByMinimumPercentageDesc();
+                .findAllBySchool_IdOrderByMinimumPercentageDesc(schoolId);
     }
 
     @PostMapping("/grade-rules")
@@ -179,14 +182,22 @@ public class ExaminationController {
     public GradeRule addGradeRule(
             @Valid @RequestBody GradeRuleRequestDto r) {
 
-        if (r.getMinimumPercentage() > r.getMaximumPercentage()) {
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        if (r.getMinimumPercentage() == null
+                || r.getMaximumPercentage() == null
+                || r.getMinimumPercentage() < 0
+                || r.getMaximumPercentage() > 100
+                || r.getMinimumPercentage() > r.getMaximumPercentage()) {
             throw new IllegalArgumentException(
-                    "Minimum percentage cannot exceed maximum"
+                    "Grade percentage range must be valid and between 0 and 100"
             );
         }
 
-        boolean overlaps = gradeRuleRepository.findAll()
-                .stream()
+        List<GradeRule> existingRules =
+                gradeRuleRepository.findAllBySchool_Id(schoolId);
+
+        boolean overlaps = existingRules.stream()
                 .anyMatch(existing ->
                         r.getMinimumPercentage()
                                 <= existing.getMaximumPercentage()
@@ -200,15 +211,17 @@ public class ExaminationController {
             );
         }
 
-        return gradeRuleRepository.save(
-                GradeRule.builder()
-                        .grade(r.getGrade())
-                        .minimumPercentage(r.getMinimumPercentage())
-                        .maximumPercentage(r.getMaximumPercentage())
-                        .build()
-        );
-    }
+        GradeRule rule = GradeRule.builder()
+                .grade(r.getGrade())
+                .minimumPercentage(r.getMinimumPercentage())
+                .maximumPercentage(r.getMaximumPercentage())
+                .school(
+                        currentSchoolService.getCurrentSchool()
+                )
+                .build();
 
+        return gradeRuleRepository.save(rule);
+    }
 
     @PostMapping("/results/import")
     @PreAuthorize("hasRole('SCHOOL_ADMIN')")

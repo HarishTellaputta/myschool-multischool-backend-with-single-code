@@ -47,4 +47,157 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
     long countByAttendanceDateAndStatus(LocalDate date, String status);
     Page<Attendance> findByAttendanceDateBetween(LocalDate from, LocalDate to, Pageable pageable);
     long countByAttendanceDate(LocalDate date);
+
+
+    // =========================================================
+    // SCHOOL-SCOPED DAILY ATTENDANCE QUERIES
+    // =========================================================
+
+    Optional<Attendance>
+    findByIdAndClassEntity_School_Id(Long id, Long schoolId);
+
+    List<Attendance>
+    findByStudent_IdAndClassEntity_School_IdAndAttendanceDateBetween(
+            Long studentId,
+            Long schoolId,
+            LocalDate startDate,
+            LocalDate endDate
+    );
+
+    List<Attendance>
+    findByClassEntity_IdAndClassEntity_School_IdAndAttendanceDate(
+            Long classId,
+            Long schoolId,
+            LocalDate attendanceDate
+    );
+
+    List<Attendance>
+    findByClassEntity_IdAndClassEntity_School_IdAndAttendanceDateBetween(
+            Long classId,
+            Long schoolId,
+            LocalDate startDate,
+            LocalDate endDate
+    );
+
+    List<Attendance>
+    findByStudent_IdAndClassEntity_IdAndClassEntity_School_IdAndAttendanceDateBetween(
+            Long studentId,
+            Long classId,
+            Long schoolId,
+            LocalDate startDate,
+            LocalDate endDate
+    );
+
+    boolean existsByStudent_IdAndClassEntity_IdAndClassEntity_School_IdAndAttendanceDate(
+            Long studentId,
+            Long classId,
+            Long schoolId,
+            LocalDate attendanceDate
+    );
+
+    long countByClassEntity_School_IdAndAttendanceDate(
+            Long schoolId,
+            LocalDate attendanceDate
+    );
+
+    long countByClassEntity_School_IdAndAttendanceDateAndStatusIgnoreCase(
+            Long schoolId,
+            LocalDate attendanceDate,
+            String status
+    );
+
+    @Query("""
+        SELECT COUNT(a)
+        FROM Attendance a
+        WHERE a.student.id = :studentId
+          AND a.classEntity.id = :classId
+          AND a.classEntity.school.id = :schoolId
+          AND a.attendanceDate BETWEEN :startDate AND :endDate
+        """)
+    long countByStudentClassSchoolAndDateRange(
+            @Param("studentId") Long studentId,
+            @Param("classId") Long classId,
+            @Param("schoolId") Long schoolId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
+
+    @Query("""
+        SELECT COUNT(a)
+        FROM Attendance a
+        WHERE a.student.id = :studentId
+          AND a.classEntity.id = :classId
+          AND a.classEntity.school.id = :schoolId
+          AND a.attendanceDate BETWEEN :startDate AND :endDate
+          AND UPPER(a.status) = UPPER(:status)
+        """)
+    long countByStudentClassSchoolDateRangeAndStatus(
+            @Param("studentId") Long studentId,
+            @Param("classId") Long classId,
+            @Param("schoolId") Long schoolId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("status") String status
+    );
+
+
+    // School-scoped duplicate check
+    Optional<Attendance>
+    findByStudent_IdAndClassEntity_IdAndClassEntity_School_IdAndAttendanceDate(
+            Long studentId,
+            Long classId,
+            Long schoolId,
+            LocalDate attendanceDate
+    );
+
+    // School-scoped attendance records for a student and class
+    List<Attendance>
+    findByStudent_IdAndClassEntity_IdAndClassEntity_School_Id(
+            Long studentId,
+            Long classId,
+            Long schoolId
+    );
+
+    // School-scoped attendance records for a student
+    List<Attendance>
+    findByStudent_IdAndClassEntity_School_Id(
+            Long studentId,
+            Long schoolId
+    );
+
+    // School-scoped dashboard counts
+    long countByClassEntity_School_IdAndAttendanceDateAndStatus(
+            Long schoolId,
+            LocalDate date,
+            String status
+    );
+
+    // School-scoped attendance pagination
+    Page<Attendance>
+    findByClassEntity_School_IdAndAttendanceDateBetween(
+            Long schoolId,
+            LocalDate from,
+            LocalDate to,
+            Pageable pageable
+    );
+
+    @Query("""
+    SELECT a
+    FROM Attendance a
+    JOIN a.student s
+    JOIN s.parent p
+    JOIN a.classEntity c
+    WHERE p.id = :parentId
+      AND c.school.id = :schoolId
+      AND a.attendanceDate BETWEEN :startDate AND :endDate
+    ORDER BY a.attendanceDate DESC
+    """)
+    List<Attendance> findParentAttendanceByParentAndSchoolAndDateRange(
+            @Param("parentId") Long parentId,
+            @Param("schoolId") Long schoolId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
+
+
 }

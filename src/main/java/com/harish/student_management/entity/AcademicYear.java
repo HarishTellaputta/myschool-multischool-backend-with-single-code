@@ -10,7 +10,15 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "academic_years")
+@Table(
+        name = "academic_years",
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uk_academic_year_school_name",
+                        columnNames = {"school_id", "name"}
+                )
+        }
+)
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -21,8 +29,12 @@ public class AcademicYear {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 20)
+    @Column(nullable = false, length = 20)
     private String name;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "school_id", nullable = false)
+    private School school;
 
     @Column(name = "start_date", nullable = false)
     private LocalDate startDate;

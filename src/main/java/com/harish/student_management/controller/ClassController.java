@@ -1,3 +1,4 @@
+
 package com.harish.student_management.controller;
 
 import com.harish.student_management.dto.ClassImportResponseDto;
@@ -34,8 +35,7 @@ public class ClassController {
 
         ClassResponseDto response = classService.createClass(request);
 
-        return ResponseEntity
-                .status(HttpStatus.CREATED)
+        return ResponseEntity.status(HttpStatus.CREATED)
                 .body(response);
     }
 
@@ -45,9 +45,7 @@ public class ClassController {
     public ResponseEntity<ClassResponseDto> getClassById(
             @PathVariable Long id) {
 
-        ClassResponseDto response = classService.getClassById(id);
-
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(classService.getClassById(id));
     }
 
     @Operation(summary = "Get all classes")
@@ -55,9 +53,7 @@ public class ClassController {
     @GetMapping
     public ResponseEntity<List<ClassResponseDto>> getAllClasses() {
 
-        List<ClassResponseDto> response = classService.getAllClasses();
-
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(classService.getAllClasses());
     }
 
     @Operation(summary = "Get classes by school ID")
@@ -66,10 +62,9 @@ public class ClassController {
     public ResponseEntity<List<ClassResponseDto>> getClassesBySchoolId(
             @PathVariable Long schoolId) {
 
-        List<ClassResponseDto> response =
-                classService.getClassesBySchoolId(schoolId);
-
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(
+                classService.getClassesBySchoolId(schoolId)
+        );
     }
 
     @Operation(summary = "Update class")
@@ -79,10 +74,9 @@ public class ClassController {
             @PathVariable Long id,
             @Valid @RequestBody ClassRequestDto request) {
 
-        ClassResponseDto response =
-                classService.updateClass(id, request);
-
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(
+                classService.updateClass(id, request)
+        );
     }
 
     @Operation(summary = "Delete class")
@@ -96,10 +90,6 @@ public class ClassController {
         return ResponseEntity.noContent().build();
     }
 
-    // =========================================================
-    // IMPORT CLASSES FROM EXCEL
-    // =========================================================
-
     @Operation(summary = "Import classes from Excel")
     @PreAuthorize("hasRole('SCHOOL_ADMIN')")
     @PostMapping(
@@ -107,11 +97,11 @@ public class ClassController {
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE
     )
     public ResponseEntity<ClassImportResponseDto> importClasses(
-            @RequestParam("file") MultipartFile file,
-            @RequestParam("schoolId") Long schoolId) throws IOException {
+            @RequestParam("file") MultipartFile file)
+            throws IOException {
 
         ClassImportResponseDto response =
-                classService.importClasses(file, schoolId);
+                classService.importClasses(file);
 
         return ResponseEntity.ok(response);
     }

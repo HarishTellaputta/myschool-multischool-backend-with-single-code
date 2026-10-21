@@ -1,19 +1,7 @@
 package com.harish.student_management.service;
 
-import com.harish.student_management.entity.AcademicYear;
-import com.harish.student_management.entity.ClassEntity;
-import com.harish.student_management.entity.Parent;
-import com.harish.student_management.entity.Role;
-import com.harish.student_management.entity.Section;
-import com.harish.student_management.entity.Student;
-import com.harish.student_management.entity.User;
-import com.harish.student_management.repository.AcademicYearRepository;
-import com.harish.student_management.repository.ClassRepository;
-import com.harish.student_management.repository.ParentRepository;
-import com.harish.student_management.repository.RoleRepository;
-import com.harish.student_management.repository.SectionRepository;
-import com.harish.student_management.repository.StudentRepository;
-import com.harish.student_management.repository.UserRepository;
+import com.harish.student_management.entity.*;
+import com.harish.student_management.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.apache.poi.ss.usermodel.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -39,6 +27,8 @@ public class ExcelImportService {
     private final ClassRepository classRepository;
     private final AcademicYearRepository academicYearRepository;
     private final PasswordEncoder passwordEncoder;
+    private final CurrentSchoolService currentSchoolService;
+    private final SchoolRepository schoolRepository;
 
     /*
      * Excel date format:
@@ -51,6 +41,7 @@ public class ExcelImportService {
     @Transactional
     public String importStudentsAndParents(MultipartFile file) {
 
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException(
                     "Please upload an Excel file"
@@ -136,8 +127,10 @@ public class ExcelImportService {
                 if (parentPhone != null && !parentPhone.isBlank()) {
 
                     Optional<Parent> existingParent =
-                            parentRepository.findByContactPhone(parentPhone);
-
+                            parentRepository.findByContactPhoneAndUser_School_Id(
+                                    parentPhone,
+                                    schoolId
+                            );
                     if (existingParent.isPresent()) {
 
                         parent = existingParent.get();
@@ -159,7 +152,8 @@ public class ExcelImportService {
 
                             User user = createParentUser(
                                     parentPhone,
-                                    email
+                                    email,
+                                    schoolId
                             );
 
                             parent.setUser(user);
@@ -174,7 +168,8 @@ public class ExcelImportService {
                         parent = createParent(
                                 row,
                                 columns,
-                                parentPhone
+                                parentPhone,
+                                schoolId
                         );
 
                         parentRepository.save(parent);
@@ -190,7 +185,11 @@ public class ExcelImportService {
                  */
 
                 Optional<Student> existingStudent =
-                        studentRepository.findByAdmissionNo(admissionNo);
+                        studentRepository
+                                .findByAdmissionNoAndSection_ClassEntity_School_Id(
+                                        admissionNo,
+                                        schoolId
+                                );
 
                 Student student;
 
@@ -253,7 +252,8 @@ public class ExcelImportService {
     private Parent createParent(
             Row row,
             Map<String, Integer> columns,
-            String parentPhone) {
+            String parentPhone,
+            Long schoolId) {
 
         String email =
                 getString(
@@ -264,7 +264,8 @@ public class ExcelImportService {
 
         User user = createParentUser(
                 parentPhone,
-                email
+                email,
+                schoolId
         );
 
         return Parent.builder()
@@ -273,6 +274,13 @@ public class ExcelImportService {
                                 row,
                                 columns,
                                 "fatherName"
+                        )
+                )
+                .surname(
+                        getString(
+                                row,
+                                columns,
+                                "parentSurname"
                         )
                 )
                 .motherName(
@@ -329,6 +337,16 @@ public class ExcelImportService {
         value = getString(
                 row,
                 columns,
+                "parentSurname"
+        );
+
+        if (value != null) {
+            parent.setSurname(value);
+        }
+
+        value = getString(
+                row,
+                columns,
                 "motherName"
         );
 
@@ -352,8 +370,23 @@ public class ExcelImportService {
                 "parentEmail"
         );
 
-        if (value != null) {
-            parent.setEmail(value);
+        if (value != null && !value.isBlank()) {
+
+            String newEmail = value.trim();
+
+            User linkedUser = parent.getUser();
+
+            if (linkedUser != null
+                    && linkedUser.getEmail() != null
+                    && !linkedUser.getEmail().equalsIgnoreCase(newEmail)) {
+
+                throw new IllegalArgumentException(
+                        "Parent email change must be handled through "
+                                + "the user account update flow: " + newEmail
+                );
+            }
+
+            parent.setEmail(newEmail);
         }
 
         value = getString(
@@ -379,7 +412,8 @@ public class ExcelImportService {
 
     private User createParentUser(
             String phone,
-            String email) {
+            String email,
+            Long schoolId) {
 
         String username = phone;
 
@@ -390,17 +424,18 @@ public class ExcelImportService {
          */
 
         Optional<User> existingByUsername =
-                userRepository.findByUsername(username);
+                userRepository.findByUsernameAndSchool_Id(
+                        username,
+                        schoolId
+                );
 
         if (existingByUsername.isPresent()) {
 
-            User existingUser =
-                    existingByUsername.get();
+            User existingUser = existingByUsername.get();
 
             if (existingUser.getRole() != null
                     && "PARENT".equalsIgnoreCase(
                     existingUser.getRole().getName())) {
-
                 return existingUser;
             }
 
@@ -410,6 +445,14 @@ public class ExcelImportService {
             );
         }
 
+// Username is globally unique.
+// If it exists but not in this school, do not reuse it.
+        if (userRepository.existsByUsername(username)) {
+            throw new IllegalArgumentException(
+                    "This phone number is already registered "
+                            + "under another school: " + username
+            );
+        }
         /*
          * ---------------------------------------------------------
          * EMAIL CHECK
@@ -419,27 +462,35 @@ public class ExcelImportService {
         if (email != null && !email.isBlank()) {
 
             Optional<User> existingByEmail =
-                    userRepository.findByEmail(email);
+                    userRepository.findByEmailAndSchool_Id(
+                            email,
+                            schoolId
+                    );
 
             if (existingByEmail.isPresent()) {
-
-                User existingUser =
-                        existingByEmail.get();
+                User existingUser = existingByEmail.get();
 
                 if (existingUser.getRole() != null
                         && "PARENT".equalsIgnoreCase(
                         existingUser.getRole().getName())) {
-
                     return existingUser;
                 }
 
                 throw new IllegalArgumentException(
-                        "Email already belongs to another user: "
+                        "Email already belongs to another user in your school: "
                                 + email
                 );
             }
-        }
 
+            // Email is globally unique in User entity.
+            // Do not reuse an account belonging to another school.
+            if (userRepository.existsByEmail(email)) {
+                throw new IllegalArgumentException(
+                        "This email is already registered. "
+                                + "Use a different email: " + email
+                );
+            }
+        }
         /*
          * ---------------------------------------------------------
          * PARENT ROLE
@@ -461,15 +512,19 @@ public class ExcelImportService {
          */
         String temporaryPassword = "Parent@123";
 
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "School not found: " + schoolId
+                        )
+                );
+
         User user = User.builder()
                 .username(username)
                 .email(email)
-                .password(
-                        passwordEncoder.encode(
-                                temporaryPassword
-                        )
-                )
+                .password(passwordEncoder.encode(temporaryPassword))
                 .role(parentRole)
+                .school(school)
                 .status("ACTIVE")
                 .build();
 
@@ -510,6 +565,14 @@ public class ExcelImportService {
                         row,
                         columns,
                         "name"
+                )
+        );
+
+        student.setSurname(
+                getString(
+                        row,
+                        columns,
+                        "surname"
                 )
         );
 
@@ -652,6 +715,16 @@ public class ExcelImportService {
 
         if (value != null) {
             student.setName(value);
+        }
+
+        value = getString(
+                row,
+                columns,
+                "surname"
+        );
+
+        if (value != null) {
+            student.setSurname(value);
         }
 
         value = getString(
@@ -828,14 +901,17 @@ public class ExcelImportService {
          * Example:
          * 4th Class
          */
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
         ClassEntity classEntity =
                 classRepository
-                        .findByNameIgnoreCase(
-                                className
+                        .findByNameIgnoreCaseAndSchool_Id(
+                                className,
+                                schoolId
                         )
                         .orElseThrow(() ->
                                 new IllegalArgumentException(
-                                        "Class not found: "
+                                        "Class not found in your school: "
                                                 + className
                                 )
                         );
@@ -850,17 +926,16 @@ public class ExcelImportService {
          */
         Section section =
                 sectionRepository
-                        .findByNameIgnoreCaseAndClassEntityId(
+                        .findByNameIgnoreCaseAndClassEntityIdAndClassEntity_School_Id(
                                 sectionName,
-                                classEntity.getId()
+                                classEntity.getId(),
+                                schoolId
                         )
                         .orElseThrow(() ->
                                 new IllegalArgumentException(
-                                        "Section '"
-                                                + sectionName
-                                                + "' not found in class '"
-                                                + className
-                                                + "'"
+                                        "Section '" + sectionName
+                                                + "' not found in your school, class '"
+                                                + className + "'"
                                 )
                         );
 
@@ -893,21 +968,22 @@ public class ExcelImportService {
             );
         }
 
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
         AcademicYear academicYear =
                 academicYearRepository
-                        .findByNameIgnoreCase(
-                                academicYearName
+                        .findBySchool_IdAndNameIgnoreCase(
+                                schoolId,
+                                academicYearName.trim()
                         )
                         .orElseThrow(() ->
                                 new IllegalArgumentException(
-                                        "Academic year not found: "
+                                        "Academic year not found in your school: "
                                                 + academicYearName
                                 )
                         );
 
-        student.setAcademicYear(
-                academicYear
-        );
+        student.setAcademicYear(academicYear);
     }
 
     /*

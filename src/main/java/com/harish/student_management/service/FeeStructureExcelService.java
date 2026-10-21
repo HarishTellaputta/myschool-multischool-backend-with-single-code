@@ -28,9 +28,11 @@ public class FeeStructureExcelService {
     private final FeeStructureRepository feeStructureRepository;
     private final ClassRepository classRepository;
     private final AcademicYearRepository academicYearRepository;
+    private final CurrentSchoolService currentSchoolService;
 
     public FeeStructureImportResultDto importExcel(MultipartFile file) {
 
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Excel file is required");
         }
@@ -133,22 +135,24 @@ public class FeeStructureExcelService {
                      * findByName method. If your ClassRepository does not
                      * have it, we will add the exact method there.
                      */
-                    ClassEntity classEntity =
-                            classRepository.findByNameIgnoreCase(className.trim())
-                                    .orElseThrow(() ->
-                                            new IllegalArgumentException(
-                                                    "Class not found: " + className
-                                            ));
+                    ClassEntity classEntity = classRepository.findBySchoolId(schoolId)
+                            .stream()
+                            .filter(c -> c.getName() != null
+                                    && c.getName().equalsIgnoreCase(className.trim()))
+                            .findFirst()
+                            .orElseThrow(() ->
+                                    new IllegalArgumentException(
+                                            "Class not found in your school: " + className
+                                    ));
 
-                    AcademicYear academicYear =
-                            academicYearRepository.findByNameIgnoreCase(
-                                            academicYearName.trim()
-                                    )
-                                    .orElseThrow(() ->
-                                            new IllegalArgumentException(
-                                                    "Academic Year not found: "
-                                                            + academicYearName
-                                            ));
+                    AcademicYear academicYear = academicYearRepository
+                            .findBySchool_IdAndNameIgnoreCase(
+                                    schoolId,
+                                    academicYearName.trim()
+                            )
+                            .orElseThrow(() -> new IllegalArgumentException(
+                                    "Academic year not found in your school: " + academicYearName
+                            ));
 
                     String normalizedFeeName = feeName.trim();
 
@@ -413,7 +417,10 @@ public class FeeStructureExcelService {
              *
              * No class is hardcoded here.
              */
-            List<ClassEntity> classes = classRepository.findAll();
+            List<ClassEntity> classes =
+                    classRepository.findBySchoolId(
+                            currentSchoolService.getCurrentSchoolId()
+                    );
 
             int rowIndex = 1;
 

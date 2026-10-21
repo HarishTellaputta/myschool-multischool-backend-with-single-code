@@ -54,6 +54,7 @@ public class TeacherTimetableServiceImpl
     private final ClassSubjectRepository classSubjectRepository;
 
     private final TeacherClassAssignmentRepository assignmentRepository;
+    private final CurrentSchoolService currentSchoolService;
 
 
     // =========================================================
@@ -193,47 +194,46 @@ public class TeacherTimetableServiceImpl
     // =========================================================
 
     @Override
-    public TeacherTimetableResponseDto getTimetableById(
-            Long id) {
-
-        logger.info(
-                "Fetching timetable entry with ID: {}",
-                id
-        );
+    public TeacherTimetableResponseDto getTimetableById(Long id) {
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
         TeacherTimetable timetable =
-                timetableRepository.findById(id)
+                timetableRepository.findByIdAndSchoolId(id, schoolId)
                         .orElseThrow(() ->
                                 new ResourceNotFoundException(
-                                        "Timetable entry not found with id: "
-                                                + id
-                                )
-                        );
+                                        "Timetable entry not found in current school: " + id));
 
         return mapToResponseDto(timetable);
     }
-
 
     // =========================================================
     // GET BY TEACHER
     // =========================================================
 
     @Override
-    public List<TeacherTimetableResponseDto>
-    getTimetableByTeacherId(Long teacherId) {
+    public List<TeacherTimetableResponseDto> getTimetableByTeacherId(
+            Long teacherId) {
+
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
         logger.info(
-                "Fetching timetable entries for teacher ID: {}",
-                teacherId
+                "Fetching timetable for teacher ID: {} and school ID: {}",
+                teacherId,
+                schoolId
         );
 
+        if (!teacherRepository.existsByIdAndSchool_Id(teacherId, schoolId)) {
+            throw new IllegalArgumentException(
+                    "Teacher not found in the current school"
+            );
+        }
+
         return timetableRepository
-                .findByTeacherId(teacherId)
+                .findByTeacherIdAndSchoolId(teacherId, schoolId)
                 .stream()
                 .map(this::mapToResponseDto)
                 .toList();
     }
-
 
     // =========================================================
     // GET BY TEACHER + DAY
@@ -245,12 +245,6 @@ public class TeacherTimetableServiceImpl
             Long teacherId,
             String dayOfWeek) {
 
-        logger.info(
-                "Fetching timetable entries for teacher ID: {} and day: {}",
-                teacherId,
-                dayOfWeek
-        );
-
         if (dayOfWeek == null || dayOfWeek.isBlank()) {
             throw new IllegalArgumentException(
                     "Day of week is required"
@@ -260,50 +254,44 @@ public class TeacherTimetableServiceImpl
         DayOfWeek day;
 
         try {
-
             day = DayOfWeek.valueOf(
                     dayOfWeek.trim().toUpperCase()
             );
-
         } catch (IllegalArgumentException ex) {
-
             throw new IllegalArgumentException(
                     "Invalid day of week: " + dayOfWeek
             );
         }
 
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
         return timetableRepository
-                .findByTeacherIdAndDayOfWeek(
+                .findByTeacherIdAndDayOfWeekAndSchoolId(
                         teacherId,
-                        day
+                        day,
+                        schoolId
                 )
                 .stream()
                 .map(this::mapToResponseDto)
                 .toList();
     }
 
-
     // =========================================================
     // GET BY CLASS
     // =========================================================
 
     @Override
-    public List<TeacherTimetableResponseDto>
-    getTimetableByClassId(Long classId) {
+    public List<TeacherTimetableResponseDto> getTimetableByClassId(
+            Long classId) {
 
-        logger.info(
-                "Fetching timetable entries for class ID: {}",
-                classId
-        );
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
         return timetableRepository
-                .findByClassId(classId)
+                .findByClassIdAndSchoolId(classId, schoolId)
                 .stream()
                 .map(this::mapToResponseDto)
                 .toList();
     }
-
-
     // =========================================================
     // UPDATE TIMETABLE
     // =========================================================
@@ -321,7 +309,9 @@ public class TeacherTimetableServiceImpl
         validateRequest(request);
 
         TeacherTimetable timetable =
-                timetableRepository.findById(id)
+                timetableRepository.findByIdAndSchoolId(
+                                id,
+                                currentSchoolService.getCurrentSchoolId())
                         .orElseThrow(() ->
                                 new ResourceNotFoundException(
                                         "Timetable entry not found with id: "
@@ -464,29 +454,16 @@ public class TeacherTimetableServiceImpl
 
     @Override
     public void deleteTimetable(Long id) {
-
-        logger.info(
-                "Deleting timetable entry with ID: {}",
-                id
-        );
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
         TeacherTimetable timetable =
-                timetableRepository.findById(id)
+                timetableRepository.findByIdAndSchoolId(id, schoolId)
                         .orElseThrow(() ->
                                 new ResourceNotFoundException(
-                                        "Timetable entry not found with id: "
-                                                + id
-                                )
-                        );
+                                        "Timetable entry not found in current school: " + id));
 
         timetableRepository.delete(timetable);
-
-        logger.info(
-                "Timetable entry deleted successfully with ID: {}",
-                id
-        );
     }
-
 
     // =========================================================
     // GET TIMETABLE BY STUDENT
@@ -496,53 +473,42 @@ public class TeacherTimetableServiceImpl
     public List<TeacherTimetableResponseDto>
     getTimetableByStudentId(Long studentId) {
 
-        logger.info(
-                "Fetching timetable for student ID: {}",
-                studentId
-        );
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
-        var student =
-                studentRepository.findById(studentId)
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "Student not found with id: "
-                                                + studentId
-                                )
-                        );
+        var student = studentRepository.findById(studentId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Student not found: " + studentId
+                        )
+                );
 
-        if (student.getSection() == null) {
+        if (student.getSection() == null
+                || student.getSection().getClassEntity() == null) {
             return List.of();
         }
 
-        if (student.getSection().getClassEntity() == null) {
-            return List.of();
+        var classEntity = student.getSection().getClassEntity();
+
+        if (classEntity.getSchool() == null
+                || !schoolId.equals(classEntity.getSchool().getId())) {
+            throw new ResourceNotFoundException(
+                    "Student not found in current school: " + studentId
+            );
         }
 
-        Long classId =
-                student.getSection()
-                        .getClassEntity()
-                        .getId();
-
-        Long sectionId =
-                student.getSection()
-                        .getId();
+        Long classId = classEntity.getId();
+        Long sectionId = student.getSection().getId();
 
         return timetableRepository
-                .findByClassId(classId)
+                .findByClassIdAndSchoolId(classId, schoolId)
                 .stream()
                 .filter(timetable ->
-
                         timetable.getSection() == null
-
-                                || timetable.getSection()
-                                .getId()
-                                .equals(sectionId)
-
+                                || timetable.getSection().getId().equals(sectionId)
                 )
                 .map(this::mapToResponseDto)
                 .toList();
     }
-
 
     // =========================================================
     // GET SECTION
@@ -631,47 +597,26 @@ public class TeacherTimetableServiceImpl
             ClassEntity classEntity,
             Subject subject) {
 
-        if (teacher.getSchool() == null) {
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        if (teacher.getSchool() == null
+                || classEntity.getSchool() == null
+                || subject.getSchool() == null) {
             throw new IllegalArgumentException(
-                    "Teacher is not associated with a school"
+                    "Teacher, Class and Subject must belong to a school"
             );
         }
 
-        if (classEntity.getSchool() == null) {
-            throw new IllegalArgumentException(
-                    "Class is not associated with a school"
-            );
-        }
+        Long teacherSchoolId = teacher.getSchool().getId();
+        Long classSchoolId = classEntity.getSchool().getId();
+        Long subjectSchoolId = subject.getSchool().getId();
 
-        if (subject.getSchool() == null) {
-            throw new IllegalArgumentException(
-                    "Subject is not associated with a school"
-            );
-        }
-
-        Long teacherSchoolId =
-                teacher.getSchool().getId();
-
-        Long classSchoolId =
-                classEntity.getSchool().getId();
-
-        Long subjectSchoolId =
-                subject.getSchool().getId();
-
-        if (teacherSchoolId == null
-                || classSchoolId == null
-                || subjectSchoolId == null) {
-
-            throw new IllegalArgumentException(
-                    "Teacher, Class and Subject must have valid school IDs"
-            );
-        }
-
-        if (!teacherSchoolId.equals(classSchoolId)
-                || !classSchoolId.equals(subjectSchoolId)) {
-
-            throw new IllegalArgumentException(
-                    "Teacher, Class and Subject must belong to the same school"
+        if (schoolId == null
+                || !schoolId.equals(teacherSchoolId)
+                || !schoolId.equals(classSchoolId)
+                || !schoolId.equals(subjectSchoolId)) {
+            throw new ResourceNotFoundException(
+                    "Teacher, Class or Subject not found in current school"
             );
         }
     }
@@ -793,16 +738,19 @@ public class TeacherTimetableServiceImpl
             Section section,
             TeacherTimetableRequestDto request) {
 
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        // Existing teacher conflict and class conflict logic continues here.
+
         // -----------------------------------------------------
         // TEACHER CONFLICT
         // -----------------------------------------------------
 
         List<TeacherTimetable> teacherEntries =
-                timetableRepository
-                        .findByTeacherIdAndDayOfWeek(
-                                teacherId,
-                                request.getDayOfWeek()
-                        );
+                timetableRepository.findByTeacherIdAndDayOfWeekAndSchoolId(
+                        teacherId,
+                        request.getDayOfWeek(),
+                        schoolId);
 
         boolean teacherConflict =
                 teacherEntries
@@ -835,19 +783,14 @@ public class TeacherTimetableServiceImpl
         // -----------------------------------------------------
 
         List<TeacherTimetable> classEntries =
-                timetableRepository
-                        .findByClassId(classId)
+                timetableRepository.findByClassIdAndSchoolId(
+                                classId,
+                                schoolId)
                         .stream()
                         .filter(entry ->
-                                entry.getDayOfWeek()
-                                        == request.getDayOfWeek()
-                        )
+                                entry.getDayOfWeek() == request.getDayOfWeek())
                         .filter(entry ->
-                                isSameSectionScope(
-                                        entry,
-                                        section
-                                )
-                        )
+                                isSameSectionScope(entry, section))
                         .toList();
 
         boolean classConflict =
@@ -1400,8 +1343,11 @@ public class TeacherTimetableServiceImpl
             LocalTime startTime,
             LocalTime endTime) {
 
-        return timetableRepository
-                .findByClassId(classId)
+        return timetableRepository.
+        findByClassIdAndSchoolId(
+                classId,
+                currentSchoolService.getCurrentSchoolId()
+        )
                 .stream()
                 .filter(entry ->
                         entry.getSection() != null

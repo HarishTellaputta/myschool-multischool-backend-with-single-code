@@ -23,7 +23,6 @@ public interface ClassService {
     void deleteClass(Long id);
 
     ClassImportResponseDto importClasses(
-            MultipartFile file,
-            Long schoolId
+            MultipartFile file
     ) throws IOException;
 }

@@ -33,4 +33,43 @@ public interface SectionRepository extends JpaRepository<Section, Long> {
     Optional<Section> findByIdWithClassAndSchool(
             @Param("sectionId") Long sectionId
     );
+
+    Optional<Section> findByNameIgnoreCaseAndClassEntityIdAndClassEntity_School_Id(
+            String name,
+            Long classId,
+            Long schoolId
+    );
+
+    @Query("""
+    SELECT s FROM Section s
+    JOIN FETCH s.classEntity c
+    WHERE c.school.id = :schoolId
+    ORDER BY c.name, s.name
+    """)
+    List<Section> findAllBySchoolId(
+            @Param("schoolId") Long schoolId
+    );
+
+    @Query("""
+    SELECT s FROM Section s
+    JOIN FETCH s.classEntity c
+    WHERE s.id = :sectionId
+      AND c.school.id = :schoolId
+    """)
+    Optional<Section> findByIdAndSchoolId(
+            @Param("sectionId") Long sectionId,
+            @Param("schoolId") Long schoolId
+    );
+
+    @Query("""
+    SELECT s FROM Section s
+    JOIN FETCH s.classEntity c
+    WHERE c.id = :classId
+      AND c.school.id = :schoolId
+    ORDER BY s.name
+    """)
+    List<Section> findByClassIdAndSchoolId(
+            @Param("classId") Long classId,
+            @Param("schoolId") Long schoolId
+    );
 }

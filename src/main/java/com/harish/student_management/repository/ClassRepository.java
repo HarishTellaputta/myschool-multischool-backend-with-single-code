@@ -23,4 +23,20 @@ public interface ClassRepository extends JpaRepository<ClassEntity, Long> {
             String name,
             Long schoolId
     );
+    Optional<ClassEntity> findByNameIgnoreCaseAndSchool_Id(
+            String name,
+            Long schoolId
+    );
+
+
+    Optional<ClassEntity> findBySchoolIdAndCode(Long schoolId, String code);
+
+    boolean existsBySchoolIdAndCode(Long schoolId, String code);
+
+    Optional<ClassEntity> findByIdAndSchool_Id(
+            Long id,
+            Long schoolId
+    );
+
+
 }

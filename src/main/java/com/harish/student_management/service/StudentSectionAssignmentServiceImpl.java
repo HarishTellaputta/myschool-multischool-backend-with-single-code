@@ -12,102 +12,77 @@ import com.harish.student_management.repository.SectionRepository;
 import com.harish.student_management.repository.StudentRepository;
 import com.harish.student_management.repository.StudentSectionAssignmentRepository;
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
-public class StudentSectionAssignmentServiceImpl implements StudentSectionAssignmentService {
-
-    private static final Logger logger = LoggerFactory.getLogger(StudentSectionAssignmentServiceImpl.class);
+@Transactional(readOnly = true)
+public class StudentSectionAssignmentServiceImpl
+        implements StudentSectionAssignmentService {
 
     private final StudentSectionAssignmentRepository assignmentRepository;
     private final StudentRepository studentRepository;
     private final SectionRepository sectionRepository;
     private final AcademicYearRepository academicYearRepository;
+    private final CurrentSchoolService currentSchoolService;
+
+    private Long currentSchoolId() {
+        return currentSchoolService.getCurrentSchoolId();
+    }
 
     @Override
+    @Transactional
     public StudentSectionAssignmentResponseDto assignStudentToSection(
             StudentSectionAssignmentRequestDto request) {
 
-        logger.info(
-                "Assigning student {} to section {} for academic year: {}",
-                request.getStudentId(),
-                request.getSectionId(),
-                request.getAcademicYearId()
-        );
+        Long schoolId = currentSchoolId();
 
-        // =========================================================
-        // GET STUDENT
-        // =========================================================
+        Student student = studentRepository.findById(request.getStudentId())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Student not found: " + request.getStudentId()));
 
-        Student student = studentRepository.findById(
-                        request.getStudentId()
-                )
-                .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "Student not found with id: "
-                                        + request.getStudentId()
-                        )
-                );
+        Section section = sectionRepository.findById(request.getSectionId())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Section not found: " + request.getSectionId()));
 
+        AcademicYear academicYear =
+                academicYearRepository.findByIdAndSchool_Id(
+                                request.getAcademicYearId(), schoolId)
+                        .orElseThrow(() -> new ResourceNotFoundException(
+                                "Academic year not found: "
+                                        + request.getAcademicYearId()));
 
-        // =========================================================
-        // GET SECTION
-        // =========================================================
-
-        Section section = sectionRepository.findById(
-                        request.getSectionId()
-                )
-                .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "Section not found with id: "
-                                        + request.getSectionId()
-                        )
-                );
-
-
-        // =========================================================
-        // GET ACADEMIC YEAR
-        // =========================================================
-
-        AcademicYear academicYear = academicYearRepository.findById(
-                        request.getAcademicYearId()
-                )
-                .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "Academic year not found with id: "
-                                        + request.getAcademicYearId()
-                        )
-                );
-
-
-        // =========================================================
-        // CHECK: STUDENT ALREADY ASSIGNED TO A SECTION
-        // FOR THIS ACADEMIC YEAR
-        // =========================================================
-
-        Optional<StudentSectionAssignment> existingAssignment =
-                assignmentRepository.findByStudentIdAndAcademicYearId(
-                        request.getStudentId(),
-                        request.getAcademicYearId()
-                );
-
-        if (existingAssignment.isPresent()) {
-
-            throw new IllegalArgumentException(
-                    "Student is already assigned to a section for this academic year"
-            );
+        // Validate that the student belongs to the authenticated school.
+        if (student.getSection() == null
+                || student.getSection().getClassEntity() == null
+                || student.getSection().getClassEntity().getSchool() == null
+                || !schoolId.equals(
+                student.getSection().getClassEntity()
+                        .getSchool().getId())) {
+            throw new ResourceNotFoundException(
+                    "Student not found in the current school");
         }
 
+        // Validate that the requested section belongs to the same school.
+        if (section.getClassEntity() == null
+                || section.getClassEntity().getSchool() == null
+                || !schoolId.equals(
+                section.getClassEntity().getSchool().getId())) {
+            throw new ResourceNotFoundException(
+                    "Section not found in the current school");
+        }
 
-        // =========================================================
-        // CREATE ASSIGNMENT
-        // =========================================================
+        // One assignment per student per academic year.
+        if (assignmentRepository
+                .findByStudentIdAndAcademicYearIdAndSchoolId(
+                        student.getId(), academicYear.getId(), schoolId)
+                .isPresent()) {
+            throw new IllegalArgumentException(
+                    "Student is already assigned for this academic year");
+        }
 
         StudentSectionAssignment assignment =
                 StudentSectionAssignment.builder()
@@ -116,85 +91,144 @@ public class StudentSectionAssignmentServiceImpl implements StudentSectionAssign
                         .academicYear(academicYear)
                         .build();
 
-
-        StudentSectionAssignment savedAssignment =
-                assignmentRepository.save(assignment);
-
-
-        logger.info(
-                "Student {} successfully assigned to section {} for academic year {}. Assignment ID: {}",
-                request.getStudentId(),
-                request.getSectionId(),
-                request.getAcademicYearId(),
-                savedAssignment.getId()
-        );
-
-
-        return mapToResponseDto(savedAssignment);
+        return mapToResponseDto(assignmentRepository.save(assignment));
     }
+
     @Override
     public StudentSectionAssignmentResponseDto getAssignmentById(Long id) {
-        logger.info("Fetching assignment with ID: {}", id);
-        StudentSectionAssignment assignment = assignmentRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Assignment not found with id: " + id));
+        StudentSectionAssignment assignment =
+                assignmentRepository.findByIdAndSchoolId(id, currentSchoolId())
+                        .orElseThrow(() -> new ResourceNotFoundException(
+                                "Assignment not found: " + id));
+
         return mapToResponseDto(assignment);
     }
 
     @Override
-    public List<StudentSectionAssignmentResponseDto> getAssignmentsByStudentId(Long studentId) {
-        logger.info("Fetching assignments for student ID: {}", studentId);
-        return assignmentRepository.findByStudentId(studentId).stream()
+    public List<StudentSectionAssignmentResponseDto> getAssignmentsByStudentId(
+            Long studentId) {
+
+        Long schoolId = currentSchoolId();
+
+        // Confirm the requested student belongs to this school.
+        studentRepository.findByIdAndSection_ClassEntity_School_Id(
+                        studentId, schoolId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Student not found in the current school"));
+
+        return assignmentRepository
+                .findByStudentIdAndSchoolId(studentId, schoolId)
+                .stream()
                 .map(this::mapToResponseDto)
                 .toList();
     }
 
     @Override
-    public List<StudentSectionAssignmentResponseDto> getAssignmentsBySectionId(Long sectionId) {
-        logger.info("Fetching assignments for section ID: {}", sectionId);
-        return assignmentRepository.findBySectionId(sectionId).stream()
+    public List<StudentSectionAssignmentResponseDto> getAssignmentsBySectionId(
+            Long sectionId) {
+
+        Long schoolId = currentSchoolId();
+
+        // Verify section ownership before returning records.
+        Section section = sectionRepository.findById(sectionId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Section not found: " + sectionId));
+
+        if (section.getClassEntity() == null
+                || section.getClassEntity().getSchool() == null
+                || !schoolId.equals(
+                section.getClassEntity().getSchool().getId())) {
+            throw new ResourceNotFoundException(
+                    "Section not found in the current school");
+        }
+
+        return assignmentRepository
+                .findBySectionIdAndSchoolId(sectionId, schoolId)
+                .stream()
                 .map(this::mapToResponseDto)
                 .toList();
     }
 
     @Override
-    public List<StudentSectionAssignmentResponseDto> getAssignmentsByAcademicYearId(Long academicYearId) {
-        logger.info("Fetching assignments for academic year ID: {}", academicYearId);
-        return assignmentRepository.findByAcademicYearId(academicYearId).stream()
+    public List<StudentSectionAssignmentResponseDto>
+    getAssignmentsByAcademicYearId(Long academicYearId) {
+
+        Long schoolId = currentSchoolId();
+
+        academicYearRepository.findByIdAndSchool_Id(academicYearId, schoolId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Academic year not found: " + academicYearId));
+
+        return assignmentRepository
+                .findByAcademicYearIdAndSchoolId(academicYearId, schoolId)
+                .stream()
                 .map(this::mapToResponseDto)
                 .toList();
     }
 
     @Override
-    public List<StudentSectionAssignmentResponseDto> getAssignmentsBySectionAndYear(Long sectionId, Long academicYearId) {
-        logger.info("Fetching assignments for section ID: {} and academic year ID: {}", sectionId, academicYearId);
-        return assignmentRepository.findBySectionIdAndAcademicYearId(sectionId, academicYearId).stream()
+    public List<StudentSectionAssignmentResponseDto>
+    getAssignmentsBySectionAndYear(Long sectionId, Long academicYearId) {
+
+        Long schoolId = currentSchoolId();
+
+        Section section = sectionRepository.findById(sectionId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Section not found: " + sectionId));
+
+        if (section.getClassEntity() == null
+                || section.getClassEntity().getSchool() == null
+                || !schoolId.equals(
+                section.getClassEntity().getSchool().getId())) {
+            throw new ResourceNotFoundException(
+                    "Section not found in the current school");
+        }
+
+        academicYearRepository.findByIdAndSchool_Id(academicYearId, schoolId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Academic year not found: " + academicYearId));
+
+        return assignmentRepository
+                .findBySectionIdAndAcademicYearIdAndSchoolId(
+                        sectionId, academicYearId, schoolId)
+                .stream()
                 .map(this::mapToResponseDto)
                 .toList();
     }
 
     @Override
+    @Transactional
     public void removeAssignment(Long id) {
-        logger.info("Removing assignment with ID: {}", id);
-        StudentSectionAssignment assignment = assignmentRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Assignment not found with id: " + id));
+        StudentSectionAssignment assignment =
+                assignmentRepository.findByIdAndSchoolId(id, currentSchoolId())
+                        .orElseThrow(() -> new ResourceNotFoundException(
+                                "Assignment not found: " + id));
+
         assignmentRepository.delete(assignment);
-        logger.info("Assignment removed successfully");
     }
 
-    private StudentSectionAssignmentResponseDto mapToResponseDto(StudentSectionAssignment assignment) {
+    private StudentSectionAssignmentResponseDto mapToResponseDto(
+            StudentSectionAssignment assignment) {
+
+        Student student = assignment.getStudent();
+        Section section = assignment.getSection();
+        AcademicYear academicYear = assignment.getAcademicYear();
+
         return StudentSectionAssignmentResponseDto.builder()
                 .id(assignment.getId())
-                .studentId(assignment.getStudent() != null ? assignment.getStudent().getId() : null)
-                .studentName(assignment.getStudent() != null ? assignment.getStudent().getName() : null)
-                .admissionNo(assignment.getStudent() != null ? assignment.getStudent().getAdmissionNo() : null)
-                .sectionId(assignment.getSection() != null ? assignment.getSection().getId() : null)
-                .sectionName(assignment.getSection() != null ? assignment.getSection().getName() : null)
-                .classId(assignment.getSection() != null && assignment.getSection().getClassEntity() != null 
-                        ? assignment.getSection().getClassEntity().getId() : null)
-                .className(assignment.getSection() != null && assignment.getSection().getClassEntity() != null 
-                        ? assignment.getSection().getClassEntity().getName() : null)
-                .academicYearId(assignment.getAcademicYear() != null ? assignment.getAcademicYear().getId() : null)
-                .academicYearName(assignment.getAcademicYear() != null ? assignment.getAcademicYear().getName() : null)
+                .studentId(student != null ? student.getId() : null)
+                .studentName(student != null ? student.getName() : null)
+                .admissionNo(student != null ? student.getAdmissionNo() : null)
+                .sectionId(section != null ? section.getId() : null)
+                .sectionName(section != null ? section.getName() : null)
+                .classId(section != null && section.getClassEntity() != null
+                        ? section.getClassEntity().getId() : null)
+                .className(section != null && section.getClassEntity() != null
+                        ? section.getClassEntity().getName() : null)
+                .academicYearId(academicYear != null
+                        ? academicYear.getId() : null)
+                .academicYearName(academicYear != null
+                        ? academicYear.getName() : null)
                 .assignedAt(assignment.getAssignedAt())
                 .build();
     }

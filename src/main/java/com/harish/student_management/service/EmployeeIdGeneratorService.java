@@ -1,3 +1,4 @@
+
 package com.harish.student_management.service;
 
 import com.harish.student_management.entity.Teacher;
@@ -13,16 +14,29 @@ import java.util.regex.Pattern;
 public class EmployeeIdGeneratorService {
 
     private static final String PREFIX = "EMP";
+
     private static final Pattern EMPLOYEE_ID_PATTERN =
             Pattern.compile("^EMP(\\d+)$", Pattern.CASE_INSENSITIVE);
 
     private final TeacherRepository teacherRepository;
 
-    public String generateNextEmployeeId() {
+    /**
+     * Generates a globally unique employee ID.
+     * The schoolId is validated to ensure the caller supplies a school.
+     * IDs remain globally unique because the current entity uses a
+     * globally unique employeeId constraint.
+     */
+    public String generateNextEmployeeId(Long schoolId) {
+
+        if (schoolId == null) {
+            throw new IllegalArgumentException(
+                    "School ID is required to generate an employee ID"
+            );
+        }
 
         int maxNumber = 0;
 
-        for (Teacher teacher : teacherRepository.findAll()) {
+        for (Teacher teacher : teacherRepository.findAllByOrderByIdAsc()) {
 
             String employeeId = teacher.getEmployeeId();
 
@@ -30,25 +44,20 @@ public class EmployeeIdGeneratorService {
                 continue;
             }
 
-            Matcher matcher = EMPLOYEE_ID_PATTERN.matcher(employeeId.trim());
+            Matcher matcher =
+                    EMPLOYEE_ID_PATTERN.matcher(employeeId.trim());
 
             if (matcher.matches()) {
-
                 try {
                     int number = Integer.parseInt(matcher.group(1));
-
-                    if (number > maxNumber) {
-                        maxNumber = number;
-                    }
-
+                    maxNumber = Math.max(maxNumber, number);
                 } catch (NumberFormatException ignored) {
-                    // Ignore invalid employee IDs
+                    // Ignore IDs with numeric suffixes too large for an int.
                 }
             }
         }
 
         int nextNumber = maxNumber + 1;
-
         String employeeId;
 
         do {

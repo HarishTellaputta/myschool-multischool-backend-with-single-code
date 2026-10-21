@@ -40,6 +40,9 @@ public class Student {
     @Column(name = "student_name", nullable = false)
     private String name;
 
+    @Column(name = "surname", length = 100)
+    private String surname;
+
     @Column(name = "student_email", unique = true)
     private String email;
 

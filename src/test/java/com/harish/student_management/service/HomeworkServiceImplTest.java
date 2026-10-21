@@ -252,7 +252,7 @@ class HomeworkServiceImplTest {
         when(classRepository.findById(1L))
                 .thenReturn(Optional.of(classEntity));
 
-        when(homeworkRepository.findByClassEntityId(1L))
+        when(homeworkRepository.findByClassEntityIdOrderByCreatedAtDescIdDesc(1L))
                 .thenReturn(Arrays.asList(homework));
 
         List<HomeworkResponseDto> result =
@@ -284,7 +284,7 @@ class HomeworkServiceImplTest {
         when(sectionRepository.findById(1L))
                 .thenReturn(Optional.of(section));
 
-        when(homeworkRepository.findBySectionId(1L))
+        when(homeworkRepository.findBySectionIdOrderByCreatedAtDescIdDesc(1L))
                 .thenReturn(Arrays.asList(homework));
 
         List<HomeworkResponseDto> result =
@@ -383,7 +383,7 @@ class HomeworkServiceImplTest {
         when(classRepository.findById(1L))
                 .thenReturn(Optional.of(classEntity));
 
-        when(homeworkRepository.findByClassEntityIdAndDueDateAfter(
+        when(homeworkRepository.findByClassEntityIdAndDueDateAfterOrderByCreatedAtDescIdDesc(
                 eq(1L),
                 any(LocalDate.class)
         )).thenReturn(Arrays.asList(homework));
@@ -402,7 +402,7 @@ class HomeworkServiceImplTest {
                 .thenReturn(Optional.of(classEntity));
 
         when(homeworkRepository
-                .findByClassEntityIdAndSubjectIdOrderByDueDate(
+                .findByClassEntityIdAndSubjectIdOrderByDueDateDesc(
                         1L,
                         1L
                 ))

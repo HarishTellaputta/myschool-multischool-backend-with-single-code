@@ -19,6 +19,9 @@ public class ParentRequestDto {
     @Size(min = 3, max = 100, message = "Father name must be between 3 and 100 characters")
     private String fatherName;
 
+    @Size(max = 100, message = "Surname must not exceed 100 characters")
+    private String surname;
+
     @Size(max = 100, message = "Mother name must not exceed 100 characters")
     private String motherName;
 

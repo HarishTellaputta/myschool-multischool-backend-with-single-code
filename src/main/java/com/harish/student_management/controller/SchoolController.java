@@ -1,5 +1,6 @@
 package com.harish.student_management.controller;
 
+import com.harish.student_management.dto.CreateSchoolWithAdminRequestDto;
 import com.harish.student_management.dto.SchoolImportResponseDto;
 import com.harish.student_management.dto.SchoolRequestDto;
 import com.harish.student_management.dto.SchoolResponseDto;
@@ -27,7 +28,7 @@ public class SchoolController {
     private final SchoolService schoolService;
 
     @Operation(summary = "Create a new school")
-    @PreAuthorize("hasRole('SCHOOL_ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     @PostMapping
     public ResponseEntity<SchoolResponseDto> createSchool(
             @Valid @RequestBody SchoolRequestDto request) {
@@ -36,7 +37,7 @@ public class SchoolController {
     }
 
     @Operation(summary = "Get school by ID")
-    @PreAuthorize("hasAnyRole('SCHOOL_ADMIN', 'TEACHER', 'STUDENT', 'PARENT')")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','SCHOOL_ADMIN', 'TEACHER', 'STUDENT', 'PARENT')")
     @GetMapping("/{id}")
     public ResponseEntity<SchoolResponseDto> getSchoolById(@PathVariable Long id) {
         SchoolResponseDto response = schoolService.getSchoolById(id);
@@ -44,7 +45,7 @@ public class SchoolController {
     }
 
     @Operation(summary = "Get all schools")
-    @PreAuthorize("hasRole('SCHOOL_ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     @GetMapping
     public ResponseEntity<List<SchoolResponseDto>> getAllSchools() {
         List<SchoolResponseDto> response = schoolService.getAllSchools();
@@ -62,7 +63,7 @@ public class SchoolController {
     }
 
     @Operation(summary = "Delete school")
-    @PreAuthorize("hasRole('SCHOOL_ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteSchool(@PathVariable Long id) {
         schoolService.deleteSchool(id);
@@ -70,13 +71,15 @@ public class SchoolController {
     }
 
     @Operation(summary = "Update school status")
-    @PreAuthorize("hasRole('SCHOOL_ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     @PatchMapping("/{id}/status")
     public ResponseEntity<SchoolResponseDto> updateSchoolStatus(
             @PathVariable Long id,
             @RequestParam String status) {
-        SchoolRequestDto request = SchoolRequestDto.builder().status(status).build();
-        SchoolResponseDto response = schoolService.updateSchool(id, request);
+
+        SchoolResponseDto response =
+                schoolService.updateSchoolStatus(id, status);
+
         return ResponseEntity.ok(response);
     }
 
@@ -96,7 +99,7 @@ public class SchoolController {
     // =========================================================
 
     @Operation(summary = "Import schools from Excel")
-    @PreAuthorize("hasRole('SCHOOL_ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     @PostMapping(
             value = "/import",
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE
@@ -109,6 +112,17 @@ public class SchoolController {
                 schoolService.importSchools(file);
 
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/with-admin")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    public ResponseEntity<SchoolResponseDto> createSchoolWithAdmin(
+            @Valid @RequestBody CreateSchoolWithAdminRequestDto request) {
+
+        SchoolResponseDto response =
+                schoolService.createSchoolWithAdmin(request);
+
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
 }

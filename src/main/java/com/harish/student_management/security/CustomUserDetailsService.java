@@ -1,10 +1,19 @@
+
 package com.harish.student_management.security;
 
 import com.harish.student_management.entity.User;
 import com.harish.student_management.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.core.userdetails.*;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Set;
+import java.util.stream.Collectors;
+
 @Service
 @RequiredArgsConstructor
 public class CustomUserDetailsService implements UserDetailsService {
@@ -12,6 +21,7 @@ public class CustomUserDetailsService implements UserDetailsService {
     private final UserRepository userRepository;
 
     @Override
+    @Transactional(readOnly = true)
     public UserDetails loadUserByUsername(String username)
             throws UsernameNotFoundException {
 
@@ -19,22 +29,34 @@ public class CustomUserDetailsService implements UserDetailsService {
                 .orElseThrow(() ->
                         new UsernameNotFoundException("User not found"));
 
-        String role = user.getRole() != null
-                ? user.getRole().getName()
-                : "STUDENT";
+        Set<String> roleNames = user.getAllRoleNames();
 
-        System.out.println("=================================");
-        System.out.println("LOGIN USERNAME : " + user.getUsername());
-        System.out.println("DB ROLE        : " + role);
-        System.out.println("SPRING ROLE     : ROLE_" + role);
-        System.out.println("=================================");
+        boolean isSuperAdmin = user.getAllRoleNames().stream()
+                .map(String::trim)
+                .anyMatch(role ->
+                        role.equalsIgnoreCase("SUPER_ADMIN")
+                                || role.equalsIgnoreCase("ROLE_SUPER_ADMIN"));
+
+        boolean schoolInactive = !isSuperAdmin
+                && user.getSchool() != null
+                && "INACTIVE".equalsIgnoreCase(user.getSchool().getStatus());
+
+        var authorities = roleNames.stream()
+                .map(String::trim)
+                .filter(role -> !role.isEmpty())
+                .map(role -> role.startsWith("ROLE_") ? role : "ROLE_" + role)
+                .distinct()
+                .map(SimpleGrantedAuthority::new)
+                .collect(Collectors.toSet());
 
         return org.springframework.security.core.userdetails.User
-                .builder()
-                .username(user.getUsername())
+                .withUsername(user.getUsername())
                 .password(user.getPassword())
-                .roles(role)   // IMPORTANT: no ROLE_ here
-                .disabled("INACTIVE".equalsIgnoreCase(user.getStatus()))
+                .authorities(authorities)
+                .disabled(
+                "INACTIVE".equalsIgnoreCase(user.getStatus())
+                        || schoolInactive
+        )
                 .build();
     }
 }

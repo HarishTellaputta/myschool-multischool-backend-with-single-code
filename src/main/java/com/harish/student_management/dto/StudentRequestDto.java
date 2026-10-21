@@ -43,6 +43,9 @@ public class StudentRequestDto {
     @Size(min = 3, max = 100, message = "Name must be between 3 and 100 characters")
     private String name;
 
+    @Size(max = 100, message = "Surname must not exceed 100 characters")
+    private String surname;
+
     @Email(message = "Enter a valid email")
     private String email;
 

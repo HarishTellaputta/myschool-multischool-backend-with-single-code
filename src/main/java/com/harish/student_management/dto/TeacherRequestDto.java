@@ -2,6 +2,7 @@ package com.harish.student_management.dto;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -23,6 +24,8 @@ public class TeacherRequestDto {
 
     @NotBlank(message = "Phone number is required")
     private String phone;
+    @Size(max = 100, message = "Surname must not exceed 100 characters")
+    private String surname;
 
     private LocalDate dateOfBirth;
 

@@ -1,4 +1,5 @@
-package com.harish.student_management.dto;
+
+        package com.harish.student_management.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -22,10 +23,7 @@ public class TeacherLeaveResponseDto {
     private LocalDate endDate;
     private String reason;
     private String status;
-    private String rejectionReason;
     private LocalDateTime appliedAt;
-    private LocalDateTime approvedAt;
-    private String approvedBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

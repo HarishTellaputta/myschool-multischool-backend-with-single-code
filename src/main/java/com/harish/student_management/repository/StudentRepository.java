@@ -1,6 +1,8 @@
 package com.harish.student_management.repository;
 
 import com.harish.student_management.entity.Student;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -104,4 +106,94 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
     List<String> findRollNumbersByClassOrderByLatest(
             @Param("classId") Long classId
     );
+
+    Optional<Student> findByAdmissionNoAndSection_ClassEntity_School_Id(
+            String admissionNo,
+            Long schoolId
+    );
+
+    boolean existsByAdmissionNoAndSection_ClassEntity_School_Id(
+            String admissionNo,
+            Long schoolId
+    );
+
+    Optional<Student> findByIdAndSection_ClassEntity_School_Id(
+            Long id,
+            Long schoolId
+    );
+
+    List<Student> findByParent_IdAndSection_ClassEntity_School_Id(
+            Long parentId,
+            Long schoolId
+    );
+
+
+    // School-wise pagination
+    Page<Student> findAllBySection_ClassEntity_School_Id(
+            Long schoolId,
+            Pageable pageable
+    );
+
+    // School-wise student count
+    long countBySection_ClassEntity_School_Id(Long schoolId);
+
+    // School-wise gender summary
+    long countByGenderIgnoreCaseAndSection_ClassEntity_School_Id(
+            String gender,
+            Long schoolId
+    );
+
+    // Class-wise students, restricted to the current school
+    List<Student> findBySection_ClassEntity_IdAndSection_ClassEntity_School_Id(
+            Long classId,
+            Long schoolId
+    );
+
+    // Section-wise students, restricted to the current school
+    List<Student> findBySection_IdAndSection_ClassEntity_School_Id(
+            Long sectionId,
+            Long schoolId
+    );
+
+    // School-wise birthday list
+    @Query("""
+            SELECT s
+            FROM Student s
+            WHERE s.section.classEntity.school.id = :schoolId
+              AND s.dateOfBirth IS NOT NULL
+              AND MONTH(s.dateOfBirth) = :month
+              AND DAY(s.dateOfBirth) = :day
+            """)
+    List<Student> findSchoolStudentsHavingBirthdayTodayBySchool(
+            @Param("schoolId") Long schoolId,
+            @Param("month") int month,
+            @Param("day") int day
+    );
+
+
+    @Query("""
+    SELECT COUNT(s)
+    FROM Student s
+    WHERE s.section.id = :sectionId
+      AND s.section.classEntity.school.id = :schoolId
+      AND s.academicYear.school.id = :schoolId
+    """)
+    long countPerformanceStudentsBySectionAndSchool(
+            @Param("sectionId") Long sectionId,
+            @Param("schoolId") Long schoolId
+    );
+
+    @Query("""
+    SELECT COUNT(s)
+    FROM Student s
+    WHERE s.section.classEntity.id = :classId
+      AND s.section.classEntity.school.id = :schoolId
+      AND s.academicYear.school.id = :schoolId
+    """)
+    long countPerformanceStudentsByClassAndSchool(
+            @Param("classId") Long classId,
+            @Param("schoolId") Long schoolId
+    );
+
+
 }

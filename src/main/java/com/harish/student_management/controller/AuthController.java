@@ -5,7 +5,9 @@ import com.harish.student_management.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -70,4 +72,19 @@ public class AuthController {
         LogoutResponseDto response = authService.logout(token);
         return ResponseEntity.ok(response);
     }
+
+
+    @Operation(summary = "Assign an additional role to a user")
+    @PreAuthorize("hasRole('SCHOOL_ADMIN')")
+    @PutMapping("/users/{userId}/roles")
+    public ResponseEntity<UserResponseDto> assignRole(
+            @PathVariable Long userId,
+            @Valid @RequestBody RoleAssignmentRequestDto request) {
+
+        UserResponseDto response =
+                authService.assignRole(userId, request.getRole());
+
+        return ResponseEntity.status(HttpStatus.OK).body(response);
+    }
+
 }

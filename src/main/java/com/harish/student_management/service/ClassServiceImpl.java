@@ -33,6 +33,9 @@ public class ClassServiceImpl implements ClassService {
     private final ClassRepository classRepository;
     private final SchoolRepository schoolRepository;
 
+    private final CurrentSchoolService currentSchoolService;
+
+
     // =========================================================
     // CREATE
     // =========================================================
@@ -45,18 +48,19 @@ public class ClassServiceImpl implements ClassService {
                 request.getCode()
         );
 
-        School school = schoolRepository.findById(request.getSchoolId())
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        School school = schoolRepository.findById(schoolId)
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
-                                "School not found with id: "
-                                        + request.getSchoolId()
+                                "School not found with id: " + schoolId
                         )
                 );
 
-        if (classRepository.existsByCode(request.getCode())) {
+        if (classRepository.existsBySchoolIdAndCode(
+                schoolId, request.getCode())) {
             throw new IllegalArgumentException(
-                    "Class already exists with code: "
-                            + request.getCode()
+                    "Class already exists with code: " + request.getCode()
             );
         }
 
@@ -101,6 +105,15 @@ public class ClassServiceImpl implements ClassService {
                                 )
                         );
 
+        Long currentSchoolId = currentSchoolService.getCurrentSchoolId();
+
+        if (classEntity.getSchool() == null
+                || !currentSchoolId.equals(classEntity.getSchool().getId())) {
+            throw new ResourceNotFoundException(
+                    "Class not found with id: " + id
+            );
+        }
+
         return mapToResponseDto(classEntity);
     }
 
@@ -108,36 +121,41 @@ public class ClassServiceImpl implements ClassService {
     // GET ALL
     // =========================================================
 
+
     @Override
     public List<ClassResponseDto> getAllClasses() {
 
-        logger.info("Fetching all classes");
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
-        return classRepository.findAll()
+        return classRepository.findBySchoolId(schoolId)
                 .stream()
                 .map(this::mapToResponseDto)
                 .toList();
     }
+
 
     // =========================================================
     // GET BY SCHOOL
     // =========================================================
 
+
     @Override
-    public List<ClassResponseDto> getClassesBySchoolId(
-            Long schoolId) {
+    public List<ClassResponseDto> getClassesBySchoolId(Long schoolId) {
 
-        logger.info(
-                "Fetching classes for school ID: {}",
-                schoolId
-        );
+        Long currentSchoolId = currentSchoolService.getCurrentSchoolId();
 
-        return classRepository
-                .findBySchoolId(schoolId)
+        if (!currentSchoolId.equals(schoolId)) {
+            throw new ResourceNotFoundException(
+                    "School not found with id: " + schoolId
+            );
+        }
+
+        return classRepository.findBySchoolId(currentSchoolId)
                 .stream()
                 .map(this::mapToResponseDto)
                 .toList();
     }
+
 
     // =========================================================
     // UPDATE
@@ -233,13 +251,15 @@ public class ClassServiceImpl implements ClassService {
 
     @Override
     public ClassImportResponseDto importClasses(
-            MultipartFile file,
-            Long schoolId) throws IOException {
+            MultipartFile file) throws IOException {
 
-        logger.info(
-                "Starting class Excel import for school ID: {}",
-                schoolId
-        );
+        Long currentSchoolId = currentSchoolService.getCurrentSchoolId();
+        School school = schoolRepository.findById(currentSchoolId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "School not found with id: " + currentSchoolId
+                        )
+                );
 
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException(
@@ -261,13 +281,13 @@ public class ClassServiceImpl implements ClassService {
         // Verify school
         // -----------------------------------------------------
 
-        School school = schoolRepository.findById(schoolId)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "School not found with id: "
-                                        + schoolId
-                        )
-                );
+//        School school = schoolRepository.findById(schoolId)
+//                .orElseThrow(() ->
+//                        new ResourceNotFoundException(
+//                                "School not found with id: "
+//                                        + schoolId
+//                        )
+//                );
 
         int totalRows = 0;
         int createdCount = 0;
@@ -486,7 +506,7 @@ public class ClassServiceImpl implements ClassService {
                         if (existingClass.getSchool() == null
                                 || !existingClass.getSchool()
                                 .getId()
-                                .equals(schoolId)) {
+                                .equals(currentSchoolId)) {
 
                             throw new IllegalArgumentException(
                                     "Class code already belongs to another school: "

@@ -12,6 +12,8 @@ import com.harish.student_management.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,15 +38,52 @@ public class ParentServiceImpl implements ParentService {
     @Override
     public ParentResponseDto createParent(ParentRequestDto request) {
 
+        User currentUser = getCurrentUser();
+
+        if (currentUser.getSchool() == null) {
+            throw new IllegalArgumentException(
+                    "Logged-in user is not assigned to a school"
+            );
+        }
+
         logger.info("Creating parent record");
 
+        // Prevent duplicate parent profiles for the same contact details.
+        if (parentRepository.findByContactPhone(request.getContactPhone()).isPresent()) {
+            throw new IllegalArgumentException(
+                    "A parent profile already exists with this phone number. "
+                            + "Please update the existing profile."
+            );
+        }
+
+        if (request.getContactEmail() != null
+                && !request.getContactEmail().isBlank()
+                && parentRepository.findByEmail(request.getContactEmail()).isPresent()) {
+
+            throw new IllegalArgumentException(
+                    "A parent profile already exists with this email. "
+                            + "Please update the existing profile."
+            );
+        }
+
+        // Reuse an existing teacher/user account when its phone or email matches.
         User user = createParentUser(
                 request.getContactPhone(),
-                request.getContactEmail()
+                request.getContactEmail(),
+                currentUser
         );
+
+        // One user can be linked to only one Parent profile.
+        if (parentRepository.findByUserId(user.getId()).isPresent()) {
+            throw new IllegalArgumentException(
+                    "A parent profile is already linked to this user. "
+                            + "Please update the existing profile."
+            );
+        }
 
         Parent parent = Parent.builder()
                 .fatherName(request.getFatherName())
+                .surname(request.getSurname())
                 .motherName(request.getMotherName())
                 .guardianName(request.getGuardianName())
                 .contactPhone(request.getContactPhone())
@@ -63,18 +102,19 @@ public class ParentServiceImpl implements ParentService {
 
         return mapToResponseDto(savedParent);
     }
-
     @Override
     @Transactional(readOnly = true)
     public ParentResponseDto getParentById(Long id) {
 
         logger.info("Fetching parent with ID: {}", id);
 
-        Parent parent = parentRepository.findById(id)
+        Parent parent = parentRepository
+                .findByIdAndUser_School_Id(id, getCurrentSchoolId())
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
                                 "Parent not found with id: " + id
-                        ));
+                        )
+                );
 
         return mapToResponseDto(parent);
     }
@@ -82,10 +122,10 @@ public class ParentServiceImpl implements ParentService {
     @Override
     @Transactional(readOnly = true)
     public List<ParentResponseDto> getAllParents() {
+        Long schoolId = getCurrentSchoolId();
 
-        logger.info("Fetching all parents");
-
-        return parentRepository.findAll()
+        return parentRepository
+                .findAllByUser_School_Id(schoolId)
                 .stream()
                 .map(this::mapToResponseDto)
                 .toList();
@@ -98,13 +138,35 @@ public class ParentServiceImpl implements ParentService {
 
         logger.info("Updating parent with ID: {}", id);
 
-        Parent parent = parentRepository.findById(id)
+
+
+        Parent parent = parentRepository
+                .findByIdAndUser_School_Id(id, getCurrentSchoolId())
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
                                 "Parent not found with id: " + id
                         ));
 
+        String requestedPhone = request.getContactPhone();
+
+        if (requestedPhone != null
+                && !requestedPhone.equals(parent.getContactPhone())) {
+
+            Optional<Parent> existingParent =
+                    parentRepository.findByContactPhone(requestedPhone);
+
+            if (existingParent.isPresent()
+                    && !existingParent.get().getId().equals(parent.getId())) {
+                throw new IllegalArgumentException(
+                        "A parent profile already exists with this phone number"
+                );
+            }
+        }
+
         parent.setFatherName(request.getFatherName());
+        if (request.getSurname() != null) {
+            parent.setSurname(request.getSurname());
+        }
         parent.setMotherName(request.getMotherName());
         parent.setGuardianName(request.getGuardianName());
         parent.setContactPhone(request.getContactPhone());
@@ -127,24 +189,45 @@ public class ParentServiceImpl implements ParentService {
 
         logger.info("Deleting parent with ID: {}", id);
 
-        Parent parent = parentRepository.findById(id)
+        Parent parent = parentRepository
+                .findByIdAndUser_School_Id(id, getCurrentSchoolId())
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
                                 "Parent not found with id: " + id
                         ));
 
+
         /*
          * Before deleting parent,
          * remove parent relation from all students.
          */
+        Long schoolId = getCurrentSchoolId();
+
         List<Student> students =
                 studentRepository.findByParentId(id);
 
         for (Student student : students) {
+
+            if (student.getSection() == null
+                    || student.getSection().getClassEntity() == null
+                    || student.getSection().getClassEntity().getSchool() == null
+                    || !schoolId.equals(
+                    student.getSection()
+                            .getClassEntity()
+                            .getSchool()
+                            .getId())) {
+
+                throw new IllegalStateException(
+                        "Parent has a student linked outside your school. "
+                                + "Resolve the relationship before deleting."
+                );
+            }
+
             student.setParent(null);
         }
 
         studentRepository.saveAll(students);
+        parentRepository.delete(parent);
 
         parentRepository.delete(parent);
 
@@ -165,11 +248,13 @@ public class ParentServiceImpl implements ParentService {
                 parentId
         );
 
-        Parent parent = parentRepository.findById(parentId)
+        Parent parent = parentRepository
+                .findByIdAndUser_School_Id(parentId, getCurrentSchoolId())
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
                                 "Parent not found with id: " + parentId
-                        ));
+                        )
+                );
 
         Student student = studentRepository.findById(studentId)
                 .orElseThrow(() ->
@@ -177,6 +262,20 @@ public class ParentServiceImpl implements ParentService {
                                 "Student not found with id: " + studentId
                         ));
 
+        Long schoolId = getCurrentSchoolId();
+
+        if (student.getSection() == null
+                || student.getSection().getClassEntity() == null
+                || student.getSection().getClassEntity().getSchool() == null
+                || !schoolId.equals(
+                student.getSection()
+                        .getClassEntity()
+                        .getSchool()
+                        .getId())) {
+            throw new IllegalArgumentException(
+                    "Student does not belong to your school"
+            );
+        }
         /*
          * Don't allow a student to have two parents
          * using the current Student -> Parent relationship.
@@ -202,6 +301,7 @@ public class ParentServiceImpl implements ParentService {
         return mapToResponseDto(parent);
     }
 
+
     @Override
     public ParentResponseDto unlinkStudent(
             Long parentId,
@@ -213,18 +313,40 @@ public class ParentServiceImpl implements ParentService {
                 parentId
         );
 
-        Parent parent = parentRepository.findById(parentId)
+        Long schoolId = getCurrentSchoolId();
+
+        // Only allow parents belonging to the logged-in user's school
+        Parent parent = parentRepository
+                .findByIdAndUser_School_Id(parentId, schoolId)
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
                                 "Parent not found with id: " + parentId
-                        ));
+                        )
+                );
 
         Student student = studentRepository.findById(studentId)
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
                                 "Student not found with id: " + studentId
-                        ));
+                        )
+                );
 
+        // Verify that the student belongs to the same school
+        if (student.getSection() == null
+                || student.getSection().getClassEntity() == null
+                || student.getSection().getClassEntity().getSchool() == null
+                || !schoolId.equals(
+                student.getSection()
+                        .getClassEntity()
+                        .getSchool()
+                        .getId())) {
+
+            throw new IllegalArgumentException(
+                    "Student does not belong to your school"
+            );
+        }
+
+        // Verify that this student is linked to the specified parent
         if (student.getParent() == null
                 || !student.getParent().getId().equals(parentId)) {
 
@@ -234,7 +356,6 @@ public class ParentServiceImpl implements ParentService {
         }
 
         student.setParent(null);
-
         studentRepository.save(student);
 
         logger.info(
@@ -246,10 +367,26 @@ public class ParentServiceImpl implements ParentService {
         return mapToResponseDto(parent);
     }
 
+
     private ParentResponseDto mapToResponseDto(Parent parent) {
 
+        Long schoolId = parent.getUser() != null
+                && parent.getUser().getSchool() != null
+                ? parent.getUser().getSchool().getId()
+                : null;
+
+        if (schoolId == null) {
+            throw new IllegalStateException(
+                    "Parent user is not assigned to a school"
+            );
+        }
+
         List<Student> students =
-                studentRepository.findByParentId(parent.getId());
+                studentRepository
+                        .findByParent_IdAndSection_ClassEntity_School_Id(
+                                parent.getId(),
+                                schoolId
+                        );
 
         List<StudentResponseDto> studentDtos =
                 students.stream()
@@ -259,6 +396,7 @@ public class ParentServiceImpl implements ParentService {
         return ParentResponseDto.builder()
                 .id(parent.getId())
                 .fatherName(parent.getFatherName())
+                .surname(parent.getSurname())
                 .motherName(parent.getMotherName())
                 .guardianName(parent.getGuardianName())
                 .contactPhone(parent.getContactPhone())
@@ -279,6 +417,7 @@ public class ParentServiceImpl implements ParentService {
                 .id(student.getId())
                 .admissionNo(student.getAdmissionNo())
                 .name(student.getName())
+                .surname(student.getSurname())
                 .email(student.getEmail())
                 .phone(student.getPhone())
                 .dateOfBirth(student.getDateOfBirth())
@@ -347,81 +486,123 @@ public class ParentServiceImpl implements ParentService {
     @Transactional(readOnly = true)
     public ParentResponseDto getMyProfile(String username) {
 
-        logger.info(
-                "Fetching logged-in parent profile for username: {}",
-                username
-        );
+        User currentUser = getCurrentUser();
 
-        Parent parent = parentRepository.findByUserUsername(username)
+        if (!currentUser.getUsername().equals(username)) {
+            throw new IllegalArgumentException(
+                    "You cannot access another user's parent profile"
+            );
+        }
+
+        Parent parent = parentRepository.findByUserId(currentUser.getId())
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
-                                "Parent profile not found for username: " + username
+                                "Parent profile not found"
                         ));
 
         return mapToResponseDto(parent);
     }
 
 
-    private User createParentUser(
-            String phone,
-            String email) {
-
-        String username = phone;
-
-        Optional<User> existingByUsername =
-                userRepository.findByUsername(username);
-
-        if (existingByUsername.isPresent()) {
-
-            User existingUser = existingByUsername.get();
-
-            if (existingUser.getRole() != null
-                    && "PARENT".equalsIgnoreCase(
-                    existingUser.getRole().getName())) {
-
-                return existingUser;
-            }
-
-            throw new IllegalArgumentException(
-                    "Username already belongs to another user: " + username);
-        }
-
-        if (email != null && !email.isBlank()) {
-
-            Optional<User> existingByEmail =
-                    userRepository.findByEmail(email);
-
-            if (existingByEmail.isPresent()) {
-
-                User existingUser = existingByEmail.get();
-
-                if (existingUser.getRole() != null
-                        && "PARENT".equalsIgnoreCase(
-                        existingUser.getRole().getName())) {
-
-                    return existingUser;
-                }
-
-                throw new IllegalArgumentException(
-                        "Email already belongs to another user: " + email);
-            }
-        }
+    private User createParentUser(String phone, String email, User currentUser) {
 
         Role parentRole = roleRepository.findByName("PARENT")
                 .orElseThrow(() ->
-                        new IllegalArgumentException(
-                                "PARENT role not found"));
+                        new IllegalArgumentException("PARENT role not found")
+                );
 
+        Optional<User> userByPhone =
+                userRepository.findByUsername(phone);
+
+        Optional<User> userByEmail = Optional.empty();
+
+        if (email != null && !email.isBlank()) {
+            userByEmail = userRepository.findByEmail(email);
+        }
+
+        // Phone and email must not identify two different user accounts.
+        if (userByPhone.isPresent()
+                && userByEmail.isPresent()
+                && !userByPhone.get().getId()
+                .equals(userByEmail.get().getId())) {
+
+            throw new IllegalArgumentException(
+                    "The phone number and email belong to different user accounts. "
+                            + "Please verify the parent details."
+            );
+        }
+
+        User existingUser = userByPhone.orElse(null);
+
+        if (existingUser == null) {
+            existingUser = userByEmail.orElse(null);
+        }
+
+        // Reuse an existing account, including a Teacher account.
+        if (existingUser != null) {
+            if (existingUser.getSchool() == null
+                    || !existingUser.getSchool().getId()
+                    .equals(currentUser.getSchool().getId())) {
+                throw new IllegalArgumentException(
+                        "User belongs to another school or has no school assigned"
+                );
+            }
+
+            boolean alreadyHasParentRole =
+                    existingUser.getAllRoleNames()
+                            .stream()
+                            .anyMatch(role ->
+                                    "PARENT".equalsIgnoreCase(role)
+                            );
+
+            if (existingUser.getRole() == null) {
+                existingUser.setRole(parentRole);
+            } else if (!alreadyHasParentRole) {
+                // Preserve the primary role and add PARENT as an additional role.
+                existingUser.addAdditionalRole(parentRole);
+            }
+
+            return userRepository.save(existingUser);
+        }
+
+        // Create a new account only when no matching user exists.
         String temporaryPassword = "Parent@123";
 
         User user = User.builder()
-                .username(username)
+                .username(phone)
                 .email(email)
                 .password(passwordEncoder.encode(temporaryPassword))
                 .role(parentRole)
+                .school(currentUser.getSchool())
                 .status("ACTIVE")
                 .build();
 
         return userRepository.save(user);
+    }
+
+    private User getCurrentUser() {
+        Authentication authentication =
+                SecurityContextHolder.getContext().getAuthentication();
+
+        if (authentication == null
+                || !authentication.isAuthenticated()
+                || "anonymousUser".equals(authentication.getName())) {
+            throw new RuntimeException("User is not authenticated");
+        }
+
+        return userRepository.findByUsername(authentication.getName())
+                .orElseThrow(() ->
+                        new RuntimeException("Authenticated user not found"));
+    }
+
+    private Long getCurrentSchoolId() {
+        User user = getCurrentUser();
+
+        if (user.getSchool() == null) {
+            throw new RuntimeException(
+                    "Logged-in user is not assigned to a school");
+        }
+
+        return user.getSchool().getId();
     }
 }

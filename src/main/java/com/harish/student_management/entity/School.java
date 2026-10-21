@@ -83,6 +83,23 @@ public class School {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    @Column(
+            name = "attendance_mode",
+            nullable = false,
+            length = 20,
+            columnDefinition = "varchar(20) default 'SINGLE'"
+    )
+    @Builder.Default
+    private String attendanceMode = "SINGLE";
+
+    @Column(
+            name = "attendance_period_count",
+            nullable = false,
+            columnDefinition = "integer default 8"
+    )
+    @Builder.Default
+    private Integer attendancePeriodCount = 8;
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();

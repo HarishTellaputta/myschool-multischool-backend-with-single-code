@@ -12,12 +12,11 @@ import com.harish.student_management.repository.StudentRepository;
 
 import lombok.RequiredArgsConstructor;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
-
-import org.springframework.http.HttpStatus;
 
 import java.util.List;
 
@@ -28,35 +27,57 @@ public class ParentFeedbackService {
     private final ParentFeedbackRepository feedbackRepository;
     private final ParentRepository parentRepository;
     private final StudentRepository studentRepository;
+    private final CurrentSchoolService currentSchoolService;
 
     @Transactional
     public ParentFeedbackResponseDto create(
             ParentFeedbackRequestDto request,
             String username) {
 
+        if (request == null || username == null || username.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Valid feedback request and login are required"
+            );
+        }
+
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
         Parent parent = parentRepository
-                .findByUserUsername(username)
+                .findByUser_UsernameAndUser_School_Id(username, schoolId)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND,
-                        "Parent profile not found for this login"
+                        "Parent profile not found in the current school"
                 ));
 
         Student student = null;
 
         if (request.getStudentId() != null) {
-            student = studentRepository.findById(request.getStudentId())
+            student = studentRepository
+                    .findByIdAndSection_ClassEntity_School_Id(
+                            request.getStudentId(),
+                            schoolId
+                    )
                     .orElseThrow(() -> new ResponseStatusException(
                             HttpStatus.NOT_FOUND,
-                            "Student not found"
+                            "Student not found in the current school"
                     ));
 
-            // A parent may submit feedback only for their own child.
             if (student.getParent() == null
                     || !student.getParent().getId().equals(parent.getId())) {
                 throw new AccessDeniedException(
-                        "You cannot submit feedback for this student"
+                        "You can submit feedback only for your own child"
                 );
             }
+        }
+
+        if (request.getSubject() == null
+                || request.getSubject().isBlank()
+                || request.getMessage() == null
+                || request.getMessage().isBlank()
+                || request.getType() == null) {
+            throw new IllegalArgumentException(
+                    "Feedback type, subject and message are required"
+            );
         }
 
         ParentFeedback feedback = ParentFeedback.builder()
@@ -72,7 +93,11 @@ public class ParentFeedbackService {
 
     @Transactional(readOnly = true)
     public List<ParentFeedbackResponseDto> listForAdmin() {
-        return feedbackRepository.findAllByOrderByCreatedAtDesc()
+
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        return feedbackRepository
+                .findAllByParent_User_School_IdOrderByCreatedAtDesc(schoolId)
                 .stream()
                 .map(this::toDto)
                 .toList();
@@ -80,13 +105,22 @@ public class ParentFeedbackService {
 
     @Transactional
     public void deleteForAdmin(Long feedbackId) {
-        ParentFeedback feedback = feedbackRepository.findById(feedbackId)
+
+        if (feedbackId == null) {
+            throw new IllegalArgumentException(
+                    "Feedback ID is required"
+            );
+        }
+
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        ParentFeedback feedback = feedbackRepository
+                .findByIdAndParent_User_School_Id(feedbackId, schoolId)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND,
-                        "Complaint or suggestion not found"
+                        "Feedback not found in the current school"
                 ));
 
-        // Deletes only this feedback record.
         feedbackRepository.delete(feedback);
     }
 

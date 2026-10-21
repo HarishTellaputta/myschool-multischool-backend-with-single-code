@@ -10,6 +10,7 @@ import com.harish.student_management.repository.TeacherRepository;
 import com.harish.student_management.repository.UserRepository;
 import com.harish.student_management.repository.RoleRepository;
 import com.harish.student_management.security.JwtService;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,6 +19,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.UUID;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -38,8 +40,24 @@ public class AuthServiceImpl implements AuthService {
     private final AuthenticationManager authenticationManager;
     private final TeacherRepository teacherRepository;
 
+
     @Override
     public UserResponseDto register(UserRequestDto request) {
+
+        if (request.getUsername() == null
+                || request.getUsername().isBlank()) {
+            throw new IllegalArgumentException("Username is required");
+        }
+
+        if (request.getEmail() == null
+                || request.getEmail().isBlank()) {
+            throw new IllegalArgumentException("Email is required");
+        }
+
+        if (request.getRole() == null
+                || request.getRole().isBlank()) {
+            throw new IllegalArgumentException("Role is required");
+        }
 
         if (userRepository.existsByUsername(request.getUsername())) {
             throw new UserAlreadyExistsException("Username already exists");
@@ -49,25 +67,25 @@ public class AuthServiceImpl implements AuthService {
             throw new UserAlreadyExistsException("Email already exists");
         }
 
-        // Find requested role
-        Role role = roleRepository.findByName(request.getRole())
-                .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "Role not found: " + request.getRole()
-                        ));
+        String normalizedRole = request.getRole().trim().toUpperCase();
 
-        // Restrict to only one SCHOOL_ADMIN
-        if ("SCHOOL_ADMIN".equalsIgnoreCase(role.getName())
-                && userRepository.existsByRole_Name("SCHOOL_ADMIN")) {
-
-            throw new UserAlreadyExistsException(
-                    "Only one SCHOOL_ADMIN is allowed"
+        // Privileged accounts cannot be created through public registration.
+        if ("SUPER_ADMIN".equals(normalizedRole)
+                || "SCHOOL_ADMIN".equals(normalizedRole)) {
+            throw new IllegalArgumentException(
+                    "Privileged accounts must be created through an authorized administration workflow"
             );
         }
 
+        Role role = roleRepository.findByName(normalizedRole)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Role not found: " + normalizedRole
+                        ));
+
         User user = User.builder()
-                .username(request.getUsername())
-                .email(request.getEmail())
+                .username(request.getUsername().trim())
+                .email(request.getEmail().trim())
                 .password(passwordEncoder.encode(request.getPassword()))
                 .role(role)
                 .status("ACTIVE")
@@ -78,18 +96,18 @@ public class AuthServiceImpl implements AuthService {
         logger.info(
                 "User registered successfully with username: {} and role: {}",
                 savedUser.getUsername(),
-                savedUser.getRole()
+                normalizedRole
         );
 
         return UserResponseDto.builder()
                 .id(savedUser.getId())
                 .username(savedUser.getUsername())
                 .email(savedUser.getEmail())
-                .role(savedUser.getRole() == null
-                        ? null
-                        : savedUser.getRole().getName())
+                .role(normalizedRole)
+                .roles(savedUser.getAllRoleNames().stream().sorted().toList())
                 .build();
     }
+
     @Override
     public LoginResponseDto login(LoginRequestDto request) {
 
@@ -100,14 +118,18 @@ public class AuthServiceImpl implements AuthService {
                 )
         );
 
-        User user = userRepository.findByUsername(request.getUsername())
+        User user = userRepository.findByUsernameWithRole(request.getUsername())
                 .orElseThrow(() ->
                         new ResourceNotFoundException("User not found"));
 
-        // Block inactive teacher accounts
-        if (user.getRole() != null
-                && "TEACHER".equalsIgnoreCase(user.getRole().getName())) {
+        // Load both the primary role and additional roles.
+        var roleNames = user.getAllRoleNames();
 
+        // If the user has a TEACHER role, verify the teacher profile is active.
+        boolean hasTeacherRole = roleNames.stream()
+                .anyMatch(role -> "TEACHER".equalsIgnoreCase(role));
+
+        if (hasTeacherRole) {
             Teacher teacher = teacherRepository.findByUserId(user.getId())
                     .orElseThrow(() ->
                             new ResourceNotFoundException(
@@ -123,23 +145,30 @@ public class AuthServiceImpl implements AuthService {
 
         String token = jwtService.generateToken(request.getUsername());
 
+        String primaryRole = user.getRole() == null
+                ? null
+                : user.getRole().getName();
+
+        var allRoles = roleNames.stream()
+                .sorted()
+                .toList();
+
         logger.info(
-                "User logged in successfully with username: {} and id: {}",
+                "User logged in successfully with username: {}, id: {}, roles: {}",
                 user.getUsername(),
-                user.getId()
+                user.getId(),
+                allRoles
         );
 
         return LoginResponseDto.builder()
                 .token(token)
                 .userId(user.getId())
                 .username(user.getUsername())
-                .role(
-                        user.getRole() == null
-                                ? null
-                                : user.getRole().getName()
-                )
+                .role(primaryRole)
+                .roles(allRoles)
                 .build();
     }
+
     @Override
     public String forgotPassword(ForgotPasswordRequestDto request) {
 
@@ -248,4 +277,50 @@ public class AuthServiceImpl implements AuthService {
                 .timestamp(System.currentTimeMillis())
                 .build();
     }
+
+
+    @Override
+    @Transactional
+    public UserResponseDto assignRole(Long userId, String roleName) {
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("User not found: " + userId));
+
+        String normalizedRoleName = roleName.trim().toUpperCase();
+
+        Role role = roleRepository.findByName(normalizedRoleName)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Role not found: " + normalizedRoleName));
+
+        boolean alreadyHasRole = user.getAllRoleNames().stream()
+                .anyMatch(existing ->
+                        existing.equalsIgnoreCase(normalizedRoleName));
+
+        if (!alreadyHasRole) {
+            if (user.getRole() == null) {
+                user.setRole(role);
+            } else {
+                user.addAdditionalRole(role);
+            }
+
+            user = userRepository.save(user);
+        }
+
+        List<String> roles = user.getAllRoleNames().stream()
+                .sorted()
+                .toList();
+
+        return UserResponseDto.builder()
+                .id(user.getId())
+                .username(user.getUsername())
+                .email(user.getEmail())
+                .role(user.getRole() == null
+                        ? null
+                        : user.getRole().getName())
+                .roles(roles)
+                .build();
+    }
+
 }

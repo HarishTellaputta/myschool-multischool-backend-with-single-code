@@ -73,21 +73,26 @@ public class AcademicYearController {
     @Operation(summary = "Activate academic year")
     @PreAuthorize("hasRole('SCHOOL_ADMIN')")
     @PatchMapping("/{id}/activate")
-    public ResponseEntity<AcademicYearResponseDto> activateAcademicYear(@PathVariable Long id) {
-        AcademicYearRequestDto request = AcademicYearRequestDto.builder().current(true).build();
-        AcademicYearResponseDto response = academicYearService.updateAcademicYear(id, request);
+    public ResponseEntity<AcademicYearResponseDto> activateAcademicYear(
+            @PathVariable Long id) {
+
+        AcademicYearResponseDto response =
+                academicYearService.setAcademicYearCurrent(id, true);
+
         return ResponseEntity.ok(response);
     }
 
     @Operation(summary = "Deactivate academic year")
     @PreAuthorize("hasRole('SCHOOL_ADMIN')")
     @PatchMapping("/{id}/deactivate")
-    public ResponseEntity<AcademicYearResponseDto> deactivateAcademicYear(@PathVariable Long id) {
-        AcademicYearRequestDto request = AcademicYearRequestDto.builder().current(false).build();
-        AcademicYearResponseDto response = academicYearService.updateAcademicYear(id, request);
+    public ResponseEntity<AcademicYearResponseDto> deactivateAcademicYear(
+            @PathVariable Long id) {
+
+        AcademicYearResponseDto response =
+                academicYearService.setAcademicYearCurrent(id, false);
+
         return ResponseEntity.ok(response);
     }
-
     @Operation(summary = "Delete academic year")
     @PreAuthorize("hasRole('SCHOOL_ADMIN')")
     @DeleteMapping("/{id}")

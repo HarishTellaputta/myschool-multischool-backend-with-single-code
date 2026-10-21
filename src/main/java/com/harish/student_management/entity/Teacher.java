@@ -31,6 +31,9 @@ public class Teacher {
     @Column(nullable = false, length = 100)
     private String name;
 
+    @Column(name = "surname", length = 100)
+    private String surname;
+
     @Column(unique = true, length = 100)
     private String email;
 

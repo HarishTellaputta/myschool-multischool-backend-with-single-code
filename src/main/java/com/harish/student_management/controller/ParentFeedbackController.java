@@ -23,7 +23,6 @@ public class ParentFeedbackController {
 
     private final ParentFeedbackService service;
 
-    // Parent submits a complaint or suggestion.
     @PostMapping
     @PreAuthorize("hasRole('PARENT')")
     public ResponseEntity<ParentFeedbackResponseDto> create(
@@ -34,14 +33,12 @@ public class ParentFeedbackController {
                 .body(service.create(request, authentication.getName()));
     }
 
-    // Only school admin can read submissions.
     @GetMapping
     @PreAuthorize("hasRole('SCHOOL_ADMIN')")
     public List<ParentFeedbackResponseDto> listForAdmin() {
         return service.listForAdmin();
     }
 
-    // Only school admin can delete an individual submission.
     @DeleteMapping("/{feedbackId}")
     @PreAuthorize("hasRole('SCHOOL_ADMIN')")
     public ResponseEntity<Void> delete(

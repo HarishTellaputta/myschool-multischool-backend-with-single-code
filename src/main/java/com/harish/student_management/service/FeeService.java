@@ -34,4 +34,8 @@ public interface FeeService {
     Object updateStructure(Long structureId, FeeStructureRequestDto r);
 
     void enableStructure(Long structureId);
+    StudentFeeResponseDto applyDiscount(
+            Long studentFeeId,
+            FeeDiscountRequestDto request
+    );
 }

@@ -32,7 +32,7 @@ public class StudentSectionAssignmentController {
     }
 
     @Operation(summary = "Get assignment by ID")
-    @PreAuthorize("hasAnyRole('SCHOOL_ADMIN', 'TEACHER', 'PARENT', 'STUDENT')")
+    @PreAuthorize("hasAnyRole('SCHOOL_ADMIN', 'TEACHER')")
     @GetMapping("/{id}")
     public ResponseEntity<StudentSectionAssignmentResponseDto> getAssignmentById(@PathVariable Long id) {
         StudentSectionAssignmentResponseDto response = assignmentService.getAssignmentById(id);
@@ -40,7 +40,7 @@ public class StudentSectionAssignmentController {
     }
 
     @Operation(summary = "Get assignments by student ID")
-    @PreAuthorize("hasAnyRole('SCHOOL_ADMIN', 'TEACHER', 'PARENT', 'STUDENT')")
+    @PreAuthorize("hasAnyRole('SCHOOL_ADMIN', 'TEACHER')")
     @GetMapping("/student/{studentId}")
     public ResponseEntity<List<StudentSectionAssignmentResponseDto>> getAssignmentsByStudentId(@PathVariable Long studentId) {
         List<StudentSectionAssignmentResponseDto> response = assignmentService.getAssignmentsByStudentId(studentId);

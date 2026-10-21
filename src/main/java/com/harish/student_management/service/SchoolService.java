@@ -1,5 +1,6 @@
 package com.harish.student_management.service;
 
+import com.harish.student_management.dto.CreateSchoolWithAdminRequestDto;
 import com.harish.student_management.dto.SchoolImportResponseDto;
 import com.harish.student_management.dto.SchoolRequestDto;
 import com.harish.student_management.dto.SchoolResponseDto;
@@ -23,4 +24,9 @@ public interface SchoolService {
     SchoolResponseDto uploadSchoolLogo(Long id, MultipartFile file) throws IOException;
 
     SchoolImportResponseDto importSchools(MultipartFile file) throws IOException;
+
+    SchoolResponseDto createSchoolWithAdmin(
+            CreateSchoolWithAdminRequestDto request);
+
+    SchoolResponseDto updateSchoolStatus(Long id, String status);
 }
