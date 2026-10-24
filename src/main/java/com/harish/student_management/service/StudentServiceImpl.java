@@ -494,6 +494,7 @@ public class StudentServiceImpl implements StudentService {
     // ============================================================
 
     @Override
+    @Transactional(readOnly = true)
     public Page<StudentResponseDto> getAllStudents(
             int page,
             int size,
@@ -508,13 +509,11 @@ public class StudentServiceImpl implements StudentService {
                 sortDirectionS
         );
 
-        Sort sort =
-                sortDirectionS.equalsIgnoreCase("asc")
-                        ? Sort.by(sortBy).ascending()
-                        : Sort.by(sortBy).descending();
+        Sort sort = sortDirectionS.equalsIgnoreCase("asc")
+                ? Sort.by(sortBy).ascending()
+                : Sort.by(sortBy).descending();
 
-        Pageable pageable =
-                PageRequest.of(page, size, sort);
+        Pageable pageable = PageRequest.of(page, size, sort);
 
         Long schoolId = getCurrentSchoolId();
 
@@ -533,6 +532,7 @@ public class StudentServiceImpl implements StudentService {
     // ============================================================
 
     @Override
+    @Transactional(readOnly = true)
     public StudentResponseDto getStudentById(Long id) {
 
         logger.info("Student {}", id);
@@ -564,6 +564,7 @@ public class StudentServiceImpl implements StudentService {
     // ============================================================
 
     @Override
+    @Transactional
     public StudentResponseDto updateStudent(
             Long id,
             StudentRequestDto student) {
@@ -755,6 +756,7 @@ public class StudentServiceImpl implements StudentService {
     // ============================================================
 
     @Override
+    @Transactional
     public void deleteStudent(Long id) {
 
         Long schoolId = getCurrentSchoolId();
@@ -953,13 +955,10 @@ public class StudentServiceImpl implements StudentService {
     // ============================================================
 
     @Override
-    public List<StudentResponseDto> getStudentsByClassId(
-            Long classId) {
+    @Transactional(readOnly = true)
+    public List<StudentResponseDto> getStudentsByClassId(Long classId) {
 
-        logger.info(
-                "Fetching students for class ID: {}",
-                classId
-        );
+        logger.info("Fetching students for class ID: {}", classId);
 
         Long schoolId = getCurrentSchoolId();
 
@@ -979,6 +978,7 @@ public class StudentServiceImpl implements StudentService {
     // ============================================================
 
     @Override
+    @Transactional(readOnly = true)
     public List<StudentResponseDto> getStudentsBySectionId(
             Long sectionId) {
 

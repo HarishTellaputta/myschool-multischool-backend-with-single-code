@@ -2,6 +2,8 @@ package com.harish.student_management.repository;
 
 import com.harish.student_management.entity.ClassEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -37,6 +39,17 @@ public interface ClassRepository extends JpaRepository<ClassEntity, Long> {
             Long id,
             Long schoolId
     );
+
+    @Query("""
+    SELECT c
+    FROM ClassEntity c
+    JOIN FETCH c.school
+    WHERE c.school.id = :schoolId
+    """)
+    List<ClassEntity> findBySchoolIdWithSchool(
+            @Param("schoolId") Long schoolId
+    );
+
 
 
 }

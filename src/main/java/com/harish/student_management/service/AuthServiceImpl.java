@@ -142,23 +142,19 @@ public class AuthServiceImpl implements AuthService {
                 );
             }
         }
-
         String token = jwtService.generateToken(request.getUsername());
 
-        String primaryRole = user.getRole() == null
-                ? null
-                : user.getRole().getName();
+        String primaryRole =
+                user.getRole() == null ? null : user.getRole().getName();
 
-        var allRoles = roleNames.stream()
+        var allRoles = user.getAllRoleNames()
+                .stream()
                 .sorted()
                 .toList();
 
-        logger.info(
-                "User logged in successfully with username: {}, id: {}, roles: {}",
-                user.getUsername(),
-                user.getId(),
-                allRoles
-        );
+        Long schoolId = user.getSchool() == null
+                ? null
+                : user.getSchool().getId();
 
         return LoginResponseDto.builder()
                 .token(token)
@@ -166,6 +162,7 @@ public class AuthServiceImpl implements AuthService {
                 .username(user.getUsername())
                 .role(primaryRole)
                 .roles(allRoles)
+                .schoolId(schoolId)
                 .build();
     }
 

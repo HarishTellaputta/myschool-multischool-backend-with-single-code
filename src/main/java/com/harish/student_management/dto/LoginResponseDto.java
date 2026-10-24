@@ -1,4 +1,3 @@
-
 package com.harish.student_management.dto;
 
 import lombok.*;
@@ -15,10 +14,13 @@ public class LoginResponseDto {
     private Long userId;
     private String username;
 
-    // Backward compatibility: primary role.
+    // Primary role
     private String role;
 
-    // All roles assigned to this user.
+    // All assigned roles
     @Builder.Default
     private List<String> roles = List.of();
+
+    // School associated with this user; null when not applicable
+    private Long schoolId;
 }

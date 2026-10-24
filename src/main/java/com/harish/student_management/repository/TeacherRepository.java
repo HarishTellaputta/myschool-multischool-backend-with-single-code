@@ -87,5 +87,9 @@ public interface TeacherRepository extends JpaRepository<Teacher, Long> {
             Long schoolId
     );
 
+    Optional<Teacher> findByNameIgnoreCaseAndSchool_Id(
+            String name, Long schoolId
+    );
+
 
 }
