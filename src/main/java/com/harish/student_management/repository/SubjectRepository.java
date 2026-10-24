@@ -23,4 +23,9 @@ public interface SubjectRepository extends JpaRepository<Subject, Long> {
     // Use the school-scoped method above for tenant-facing operations.
     // Retained for compatibility with any existing callers.
     Optional<Subject> findByNameIgnoreCase(String name);
+
+    Optional<Subject> findByNameIgnoreCaseAndSchoolId(
+            String name, Long schoolId
+    );
+
 }

@@ -15,17 +15,9 @@ import java.util.Optional;
 @Repository
 public interface StudentRepository extends JpaRepository<Student, Long> {
 
-    Optional<Student> findByAdmissionNo(String admissionNo);
-
-    boolean existsByAdmissionNo(String admissionNo);
-
-    List<Student> findBySectionId(Long sectionId);
 
     List<Student> findByParentId(Long parentId);
 
-    List<Student> findByAcademicYearId(Long academicYearId);
-
-    List<Student> findByStatus(String status);
 
     long countByAdmissionDate(LocalDate date);
 
@@ -38,7 +30,6 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
             @Param("classId") Long classId
     );
 
-    long countByGenderIgnoreCase(String gender);
 
     @Query("""
             SELECT s
@@ -194,6 +185,14 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
             @Param("classId") Long classId,
             @Param("schoolId") Long schoolId
     );
+
+
+    Optional<Student>
+    findByAdmissionNoIgnoreCaseAndSection_ClassEntity_School_Id(
+            String admissionNo,
+            Long schoolId
+    );
+
 
 
 }

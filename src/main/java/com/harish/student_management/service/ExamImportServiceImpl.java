@@ -1,9 +1,6 @@
 package com.harish.student_management.service;
-
-import com.harish.student_management.dto.ExaminationImportErrorDto;
-import com.harish.student_management.dto.ExaminationImportResponseDto;
-import com.harish.student_management.dto.ExamResultImportResponseDto;
-import com.harish.student_management.dto.ExamScheduleImportResponseDto;
+import com.harish.student_management.dto.*;
+import lombok.extern.slf4j.Slf4j;
 import com.harish.student_management.entity.*;
 import com.harish.student_management.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -11,7 +8,6 @@ import org.apache.poi.ss.usermodel.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
-import com.harish.student_management.dto.ExamResultImportErrorDto;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -26,6 +22,7 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 @Transactional
+@Slf4j
 public class ExamImportServiceImpl implements ExamImportService {
 
     private final ExaminationRepository examinationRepository;
@@ -51,6 +48,8 @@ public class ExamImportServiceImpl implements ExamImportService {
     // EXAMINATION IMPORT
     // =========================================================
 
+
+
     @Override
     public ExaminationImportResponseDto importExaminationsExcel(
             MultipartFile file) {
@@ -60,16 +59,28 @@ public class ExamImportServiceImpl implements ExamImportService {
         int updated = 0;
         int errorCount = 0;
 
-        List<ExaminationImportErrorDto> errorDetails =
-                new ArrayList<>();
+        List<ExaminationImportErrorDto> errorDetails = new ArrayList<>();
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Examination Excel file is empty"
+            );
+        }
 
         try (Workbook workbook =
                      WorkbookFactory.create(file.getInputStream())) {
 
+            if (workbook.getNumberOfSheets() == 0) {
+                throw new IllegalArgumentException(
+                        "Excel file does not contain any sheets"
+                );
+            }
+
             Sheet sheet = workbook.getSheetAt(0);
 
+            // Row 0 is the header row.
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
-
                 Row row = sheet.getRow(i);
 
                 if (row == null || isRowEmpty(row)) {
@@ -78,60 +89,46 @@ public class ExamImportServiceImpl implements ExamImportService {
 
                 totalRows++;
 
+                String name = null;
+                String academicYearName = null;
+
                 try {
+                    // A: name
+                    name = getCellString(row.getCell(0));
 
-                    String academicYearName =
-                            getCellString(row.getCell(0));
+                    // B: academicYear
+                    academicYearName = getCellString(row.getCell(1));
 
-                    String name =
-                            getCellString(row.getCell(1));
+                    // C: description
+                    String description = getCellString(row.getCell(2));
 
-                    String description =
-                            getCellString(row.getCell(2));
+                    // D: examType
+                    String examType = getCellString(row.getCell(3));
 
-                    String examType =
-                            getCellString(row.getCell(3));
+                    // E: year (optional)
+                    Integer year = getCellInteger(row.getCell(4));
 
-                    Integer year =
-                            getCellInteger(row.getCell(4));
+                    // F: status (optional)
+                    String status = getCellString(row.getCell(5));
 
-                    String status =
-                            getCellString(row.getCell(5));
-
-
-                    // -------------------------------------------------
-                    // Required validation
-                    // -------------------------------------------------
-
-                    if (academicYearName == null ||
-                            academicYearName.isBlank()) {
-
+                    if (name == null || name.isBlank()) {
                         throw new IllegalArgumentException(
-                                "Academic Year is required"
+                                "Examination name is required"
                         );
                     }
 
-                    if (name == null || name.isBlank()) {
-
+                    if (academicYearName == null
+                            || academicYearName.isBlank()) {
                         throw new IllegalArgumentException(
-                                "Examination Name is required"
+                                "Academic year is required"
                         );
                     }
 
                     if (examType == null || examType.isBlank()) {
-
                         throw new IllegalArgumentException(
-                                "Exam Type is required"
+                                "Exam type is required"
                         );
                     }
-
-
-                    // -------------------------------------------------
-                    // Academic Year
-                    // -------------------------------------------------
-
-
-                    Long schoolId = currentSchoolService.getCurrentSchoolId();
 
                     AcademicYear academicYear =
                             academicYearRepository
@@ -141,19 +138,9 @@ public class ExamImportServiceImpl implements ExamImportService {
                                     )
                                     .orElseThrow(() ->
                                             new IllegalArgumentException(
-                                                    "Academic Year not found in current school: "
-                                                            + academicYearName
+                                                    "Academic year not found in current school: "
+
                                             ));
-
-
-
-                    // -------------------------------------------------
-                    // Existing Examination
-                    //
-                    // Same Academic Year + Name
-                    // = Update
-                    // Otherwise = Create
-                    // -------------------------------------------------
 
                     Examination examination =
                             examinationRepository
@@ -164,83 +151,69 @@ public class ExamImportServiceImpl implements ExamImportService {
                                     )
                                     .orElse(null);
 
+                    boolean isNew = examination == null;
 
-                    if (examination == null) {
-
-                        // ---------------------------------------------
-                        // CREATE
-                        // ---------------------------------------------
-
-                        examination =
-                                Examination.builder()
-                                        .academicYear(academicYear)
-                                        .name(name.trim())
-                                        .description(description)
-                                        .examType(examType.trim())
-                                        .year(year)
-                                        .status(
-                                                status == null ||
-                                                        status.isBlank()
-                                                        ? "DRAFT"
-                                                        : status.trim()
-                                        )
-                                        .build();
-
-                        examinationRepository.save(examination);
-
-                        created++;
-
-                    } else {
-
-                        // ---------------------------------------------
-                        // UPDATE
-                        // ---------------------------------------------
-
+                    if (isNew) {
+                        examination = new Examination();
                         examination.setAcademicYear(academicYear);
                         examination.setName(name.trim());
-                        examination.setDescription(description);
-                        examination.setExamType(examType.trim());
-                        examination.setYear(year);
+                        examination.setStatus("DRAFT");
+                    }
 
-                        if (status != null &&
-                                !status.isBlank()) {
+                    examination.setDescription(
+                            description == null || description.isBlank()
+                                    ? null
+                                    : description.trim()
+                    );
 
-                            examination.setStatus(
-                                    status.trim()
-                            );
-                        }
+                    examination.setExamType(examType.trim());
+                    examination.setYear(year);
 
-                        examinationRepository.save(examination);
+                    if (status != null && !status.isBlank()) {
+                        examination.setStatus(status.trim().toUpperCase());
+                    }
 
+                    examinationRepository.save(examination);
+
+                    if (isNew) {
+                        created++;
+                    } else {
                         updated++;
                     }
 
-
                 } catch (Exception e) {
-
                     errorCount++;
+
+                    String message = e.getMessage() == null
+                            ? "Unknown error"
+                            : e.getMessage();
+
+                    log.error(
+                            "Examination import failed. schoolId={}, row={}, name={}, error={}",
+                            schoolId, i + 1, name, message, e
+                    );
 
                     errorDetails.add(
                             ExaminationImportErrorDto.builder()
                                     .row(i + 1)
-                                    .message(
-                                            e.getMessage() != null
-                                                    ? e.getMessage()
-                                                    : "Unknown error"
-                                    )
+                                    .message(message)
                                     .build()
                     );
                 }
             }
 
         } catch (Exception e) {
+            log.error(
+                    "Unable to read examination Excel file. schoolId={}",
+                    schoolId, e
+            );
 
             throw new RuntimeException(
-                    "Failed to read Examination Excel file",
+                    "Failed to read Examination Excel file: "
+                            + e.getMessage(),
                     e
             );
         }
-
 
         return ExaminationImportResponseDto.builder()
                 .totalRows(totalRows)
@@ -250,7 +223,6 @@ public class ExamImportServiceImpl implements ExamImportService {
                 .errorDetails(errorDetails)
                 .build();
     }
-
 
     // =========================================================
     // EXAM SCHEDULE IMPORT
@@ -264,6 +236,8 @@ public class ExamImportServiceImpl implements ExamImportService {
         int created = 0;
         int updated = 0;
         int errorCount = 0;
+
+        List<ExamScheduleImportErrorDto> errorDetails = new ArrayList<>();
         Long schoolId = currentSchoolService.getCurrentSchoolId();
 
         List<String> errors = new ArrayList<>();
@@ -554,16 +528,13 @@ public class ExamImportServiceImpl implements ExamImportService {
                                     className + "]"
                     );
 
-                    ClassEntity clazz =
-                            classRepository
-                                    .findByNameIgnoreCase(
-                                            className.trim()
-                                    )
-                                    .orElseThrow(() ->
-                                            new IllegalArgumentException(
-                                                    "Class not found: "
-                                                            + className
-                                            ));
+                    ClassEntity clazz = classRepository
+                            .findByNameIgnoreCaseAndSchool_Id(
+                                    className.trim(), schoolId
+                            )
+                            .orElseThrow(() -> new IllegalArgumentException(
+                                    "Class not found in current school: " + className
+                            ));
 
                     System.out.println(
                             "CLASS FOUND: ID=" +
@@ -627,16 +598,13 @@ public class ExamImportServiceImpl implements ExamImportService {
                                     subjectName + "]"
                     );
 
-                    Subject subject =
-                            subjectRepository
-                                    .findByNameIgnoreCase(
-                                            subjectName.trim()
-                                    )
-                                    .orElseThrow(() ->
-                                            new IllegalArgumentException(
-                                                    "Subject not found: "
-                                                            + subjectName
-                                            ));
+                    Subject subject = subjectRepository
+                            .findByNameIgnoreCaseAndSchoolId(
+                                    subjectName.trim(), schoolId
+                            )
+                            .orElseThrow(() -> new IllegalArgumentException(
+                                    "Subject not found in current school: " + subjectName
+                            ));
 
                     System.out.println(
                             "SUBJECT FOUND: ID=" +
@@ -708,48 +676,20 @@ public class ExamImportServiceImpl implements ExamImportService {
 
                     Teacher teacher = null;
 
-                    if (teacherName != null &&
-                            !teacherName.isBlank()) {
+                    if (teacherName != null && !teacherName.isBlank()) {
+                        teacher = teacherRepository
+                                .findByNameIgnoreCaseAndSchool_Id(
+                                        teacherName.trim(), schoolId
+                                )
+                                .orElseThrow(() -> new IllegalArgumentException(
+                                        "Teacher not found in current school: " + teacherName
+                                ));
 
-                        System.out.println(
-                                "LOOKING FOR TEACHER: [" +
-                                        teacherName + "]"
+                        teacherAccessService.validateTeacherAccessToClassAndSubject(
+                                teacher.getId(),
+                                clazz.getId(),
+                                subject.getId()
                         );
-
-                        teacher =
-                                teacherRepository
-                                        .findByNameIgnoreCase(
-                                                teacherName.trim()
-                                        )
-                                        .orElseThrow(() ->
-                                                new IllegalArgumentException(
-                                                        "Teacher not found: "
-                                                                + teacherName
-                                                ));
-
-                        System.out.println(
-                                "TEACHER FOUND: ID=" +
-                                        teacher.getId() +
-                                        ", NAME=" +
-                                        teacher.getName()
-                        );
-
-
-                        System.out.println(
-                                "VALIDATING TEACHER ACCESS"
-                        );
-
-                        teacherAccessService
-                                .validateTeacherAccessToClassAndSubject(
-                                        teacher.getId(),
-                                        clazz.getId(),
-                                        subject.getId()
-                                );
-
-                        System.out.println(
-                                "TEACHER ACCESS VALIDATION PASSED"
-                        );
-
                     } else {
 
                         System.out.println(
@@ -1012,7 +952,11 @@ public class ExamImportServiceImpl implements ExamImportService {
          */
 
         return ExamScheduleImportResponseDto.builder()
-                // replace with your actual DTO fields
+                .totalRows(totalRows)
+                .created(created)
+                .updated(updated)
+                .errors(errorDetails.size())
+                .errorDetails(errorDetails)
                 .build();
     }
     // =========================================================
@@ -1631,19 +1575,16 @@ public class ExamImportServiceImpl implements ExamImportService {
                                     examDate
                     );
 
-                    ExamSchedule schedule =
-                            scheduleRepository
-                                    .findExistingSchedule(
-                                            examination.getId(),
-                                            clazz.getId(),
-                                            sectionId,
-                                            subject.getId(),
-                                            examDate
-                                    )
-                                    .orElseThrow(() ->
-                                            new IllegalArgumentException(
-                                                    "Exam schedule not found"
-                                            ));
+                    ExamSchedule schedule = scheduleRepository
+                            .findExistingScheduleBySchool(
+                                    examination.getId(),
+                                    clazz.getId(),
+                                    sectionId,
+                                    subject.getId(),
+                                    examDate,
+                                    schoolId
+                            )
+                            .orElse(null);
 
                     System.out.println(
                             "SCHEDULE FOUND: ID=" +
@@ -1665,16 +1606,13 @@ public class ExamImportServiceImpl implements ExamImportService {
                                     "]"
                     );
 
-                    Student student =
-                            studentRepository
-                                    .findByAdmissionNoIgnoreCase(
-                                            admissionNo.trim()
-                                    )
-                                    .orElseThrow(() ->
-                                            new IllegalArgumentException(
-                                                    "Student not found: " +
-                                                            admissionNo
-                                            ));
+                    Student student = studentRepository
+                            .findByAdmissionNoIgnoreCaseAndSection_ClassEntity_School_Id(
+                                    admissionNo.trim(), schoolId
+                            )
+                            .orElseThrow(() -> new IllegalArgumentException(
+                                    "Student not found in current school: " + admissionNo
+                            ));
 
                     System.out.println(
                             "STUDENT FOUND:"
@@ -1820,13 +1758,13 @@ public class ExamImportServiceImpl implements ExamImportService {
                             "CHECKING EXISTING RESULT..."
                     );
 
-                    ExamResult result =
-                            resultRepository
-                                    .findByExamScheduleIdAndStudentId(
-                                            schedule.getId(),
-                                            student.getId()
-                                    )
-                                    .orElse(null);
+                    ExamResult result = resultRepository
+                            .findByScheduleStudentAndSchool(
+                                    schedule.getId(),
+                                    student.getId(),
+                                    schoolId
+                            )
+                            .orElse(null);
 
                     if (result == null) {
 
@@ -1917,6 +1855,40 @@ public class ExamImportServiceImpl implements ExamImportService {
                     System.out.println(
                             "SAVING RESULT..."
                     );
+
+
+                    if (examination.getAcademicYear() == null
+                            || examination.getAcademicYear().getSchool() == null
+                            || !schoolId.equals(
+                            examination.getAcademicYear().getSchool().getId())) {
+                        throw new IllegalArgumentException(
+                                "Examination does not belong to current school"
+                        );
+                    }
+
+                    if (clazz.getSchool() == null
+                            || !schoolId.equals(clazz.getSchool().getId())) {
+                        throw new IllegalArgumentException(
+                                "Class does not belong to current school"
+                        );
+                    }
+
+                    if (subject.getSchool() == null
+                            || !schoolId.equals(subject.getSchool().getId())) {
+                        throw new IllegalArgumentException(
+                                "Subject does not belong to current school"
+                        );
+                    }
+
+                    if (student.getSection() == null
+                            || student.getSection().getClassEntity() == null
+                            || !schoolId.equals(
+                            student.getSection().getClassEntity()
+                                    .getSchool().getId())) {
+                        throw new IllegalArgumentException(
+                                "Student does not belong to current school"
+                        );
+                    }
 
                     resultRepository.save(result);
 
@@ -2120,58 +2092,41 @@ public class ExamImportServiceImpl implements ExamImportService {
     // RANKS
     // =========================================================
 
-    private void recalculateRanks(
-            Long scheduleId) {
+    private void recalculateRanks(Long scheduleId) {
+
+        Long schoolId = currentSchoolService.getCurrentSchoolId();
 
         List<ExamResult> results =
-                resultRepository
-                        .findByExamScheduleIdOrderByPercentageDesc(
-                                scheduleId
-                        );
+                resultRepository.findRankedResultsByScheduleAndSchool(
+                        scheduleId, schoolId
+                );
 
         int rank = 0;
         Double previousPercentage = null;
 
-        for (int i = 0;
-             i < results.size();
-             i++) {
-
-            ExamResult result =
-                    results.get(i);
-
-            Double percentage =
-                    result.getPercentage();
+        for (int i = 0; i < results.size(); i++) {
+            ExamResult result = results.get(i);
+            Double percentage = result.getPercentage();
 
             if (percentage == null) {
-
                 result.setClassRank(null);
                 result.setSectionRank(null);
-
                 resultRepository.save(result);
-
                 continue;
             }
 
-
-            if (previousPercentage == null ||
-                    Double.compare(
-                            previousPercentage,
-                            percentage
-                    ) != 0) {
-
+            if (previousPercentage == null
+                    || Double.compare(previousPercentage, percentage) != 0) {
                 rank = i + 1;
             }
 
             result.setClassRank(rank);
             result.setSectionRank(rank);
-
             previousPercentage = percentage;
 
             resultRepository.save(result);
         }
     }
-
-
     // =========================================================
     // STRING
     // =========================================================

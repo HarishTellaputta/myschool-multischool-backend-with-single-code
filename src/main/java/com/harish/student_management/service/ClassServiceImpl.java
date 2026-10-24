@@ -127,7 +127,8 @@ public class ClassServiceImpl implements ClassService {
 
         Long schoolId = currentSchoolService.getCurrentSchoolId();
 
-        return classRepository.findBySchoolId(schoolId)
+        return classRepository
+                .findBySchoolIdWithSchool(schoolId)
                 .stream()
                 .map(this::mapToResponseDto)
                 .toList();
@@ -142,7 +143,8 @@ public class ClassServiceImpl implements ClassService {
     @Override
     public List<ClassResponseDto> getClassesBySchoolId(Long schoolId) {
 
-        Long currentSchoolId = currentSchoolService.getCurrentSchoolId();
+        Long currentSchoolId =
+                currentSchoolService.getCurrentSchoolId();
 
         if (!currentSchoolId.equals(schoolId)) {
             throw new ResourceNotFoundException(
@@ -150,12 +152,12 @@ public class ClassServiceImpl implements ClassService {
             );
         }
 
-        return classRepository.findBySchoolId(currentSchoolId)
+        return classRepository
+                .findBySchoolIdWithSchool(currentSchoolId)
                 .stream()
                 .map(this::mapToResponseDto)
                 .toList();
     }
-
 
     // =========================================================
     // UPDATE
@@ -488,67 +490,44 @@ public class ClassServiceImpl implements ClassService {
                     // -----------------------------------------
                     // FIND EXISTING CLASS
                     // -----------------------------------------
+// -----------------------------------------
+// FIND EXISTING CLASS — SCHOOL-WISE
+// -----------------------------------------
 
                     Optional<ClassEntity> existingClassOptional =
-                            classRepository.findByCode(code);
+                            classRepository.findBySchoolIdAndCode(
+                                    currentSchoolId,
+                                    code
+                            );
 
                     if (existingClassOptional.isPresent()) {
 
-                        ClassEntity existingClass =
-                                existingClassOptional.get();
-
-                        // -------------------------------------
-                        // IMPORTANT:
-                        // Existing code must belong to the
-                        // selected school.
-                        // -------------------------------------
-
-                        if (existingClass.getSchool() == null
-                                || !existingClass.getSchool()
-                                .getId()
-                                .equals(currentSchoolId)) {
-
-                            throw new IllegalArgumentException(
-                                    "Class code already belongs to another school: "
-                                            + code
-                            );
-                        }
+                        ClassEntity existingClass = existingClassOptional.get();
 
                         existingClass.setName(name);
                         existingClass.setGrade(grade);
                         existingClass.setDescription(
-                                description.isEmpty()
-                                        ? null
-                                        : description
+                                description.isEmpty() ? null : description
                         );
                         existingClass.setYear(year);
 
                         classRepository.save(existingClass);
-
                         updatedCount++;
 
                     } else {
 
-                        // -------------------------------------
-                        // CREATE NEW CLASS
-                        // -------------------------------------
-
-                        ClassEntity newClass =
-                                ClassEntity.builder()
-                                        .school(school)
-                                        .code(code)
-                                        .name(name)
-                                        .grade(grade)
-                                        .description(
-                                                description.isEmpty()
-                                                        ? null
-                                                        : description
-                                        )
-                                        .year(year)
-                                        .build();
+                        ClassEntity newClass = ClassEntity.builder()
+                                .school(school)
+                                .code(code)
+                                .name(name)
+                                .grade(grade)
+                                .description(
+                                        description.isEmpty() ? null : description
+                                )
+                                .year(year)
+                                .build();
 
                         classRepository.save(newClass);
-
                         createdCount++;
                     }
 
