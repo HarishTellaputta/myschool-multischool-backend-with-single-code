@@ -1,3 +1,4 @@
+
 package com.harish.student_management.dto;
 
 import jakarta.validation.constraints.NotBlank;
@@ -13,8 +14,11 @@ import lombok.NoArgsConstructor;
 @Builder
 public class ResetPasswordRequestDto {
 
-    @NotBlank(message = "Token is required")
+    @NotBlank(message = "Reset token is required")
     private String token;
+
+    @NotBlank(message = "School Code is required")
+    private String schoolCode;
 
     @NotBlank(message = "New password is required")
     @Size(min = 8, message = "Password must be at least 8 characters")
