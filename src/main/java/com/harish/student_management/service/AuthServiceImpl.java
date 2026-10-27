@@ -19,6 +19,17 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+
+import com.harish.student_management.entity.Role;
+import com.harish.student_management.entity.School;
+import com.harish.student_management.entity.Teacher;
+import com.harish.student_management.entity.User;
+
+import com.harish.student_management.repository.TeacherRepository;
+import com.harish.student_management.repository.UserRepository;
+import com.harish.student_management.repository.RoleRepository;
+import com.harish.student_management.repository.SchoolRepository;
+
 import java.util.List;
 import java.util.UUID;
 import java.nio.charset.StandardCharsets;
@@ -39,9 +50,11 @@ public class AuthServiceImpl implements AuthService {
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
     private final TeacherRepository teacherRepository;
+    private final SchoolRepository schoolRepository;
 
 
     @Override
+    @Transactional
     public UserResponseDto register(UserRequestDto request) {
 
         if (request.getUsername() == null
@@ -54,22 +67,41 @@ public class AuthServiceImpl implements AuthService {
             throw new IllegalArgumentException("Email is required");
         }
 
+        if (request.getPassword() == null
+                || request.getPassword().isBlank()) {
+            throw new IllegalArgumentException("Password is required");
+        }
+
+        if (request.getSchoolCode() == null
+                || request.getSchoolCode().isBlank()) {
+            throw new IllegalArgumentException("School Code is required");
+        }
+
         if (request.getRole() == null
                 || request.getRole().isBlank()) {
             throw new IllegalArgumentException("Role is required");
         }
 
-        if (userRepository.existsByUsername(request.getUsername())) {
+        String username = request.getUsername().trim();
+        String email = request.getEmail().trim();
+        String schoolCode = request.getSchoolCode().trim();
+        String normalizedRole = request.getRole().trim().toUpperCase();
+
+        School school = schoolRepository.findByCode(schoolCode)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Invalid School Code"
+                        ));
+
+        if (userRepository.existsByUsername(username)) {
             throw new UserAlreadyExistsException("Username already exists");
         }
 
-        if (userRepository.existsByEmail(request.getEmail())) {
+        if (userRepository.existsByEmail(email)) {
             throw new UserAlreadyExistsException("Email already exists");
         }
 
-        String normalizedRole = request.getRole().trim().toUpperCase();
-
-        // Privileged accounts cannot be created through public registration.
+        // Privileged accounts must use the authorized admin workflow.
         if ("SUPER_ADMIN".equals(normalizedRole)
                 || "SCHOOL_ADMIN".equals(normalizedRole)) {
             throw new IllegalArgumentException(
@@ -84,10 +116,11 @@ public class AuthServiceImpl implements AuthService {
                         ));
 
         User user = User.builder()
-                .username(request.getUsername().trim())
-                .email(request.getEmail().trim())
+                .username(username)
+                .email(email)
                 .password(passwordEncoder.encode(request.getPassword()))
                 .role(role)
+                .school(school)
                 .status("ACTIVE")
                 .build();
 
@@ -108,33 +141,52 @@ public class AuthServiceImpl implements AuthService {
                 .build();
     }
 
+
     @Override
+    @Transactional
     public LoginResponseDto login(LoginRequestDto request) {
 
+        String username = request.getUsername().trim();
+        String schoolCode = request.getSchoolCode().trim();
+
+        // Verify that the supplied school code exists.
+        School requestedSchool = schoolRepository.findByCode(schoolCode)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "Invalid username, password, or School Code"
+                        ));
+
+        // Authenticate username and password.
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(
-                        request.getUsername(),
+                        username,
                         request.getPassword()
                 )
         );
 
-        User user = userRepository.findByUsernameWithRole(request.getUsername())
+        User user = userRepository.findByUsernameWithRole(username)
                 .orElseThrow(() ->
                         new ResourceNotFoundException("User not found"));
 
-        // Load both the primary role and additional roles.
+        // Ensure that the user belongs to the supplied school.
+        if (user.getSchool() == null
+                || !user.getSchool().getId().equals(requestedSchool.getId())) {
+            throw new IllegalArgumentException(
+                    "Invalid username, password, or School Code"
+            );
+        }
+
+        // Load primary and additional roles.
         var roleNames = user.getAllRoleNames();
 
-        // If the user has a TEACHER role, verify the teacher profile is active.
+        // Preserve the existing teacher-profile validation.
         boolean hasTeacherRole = roleNames.stream()
                 .anyMatch(role -> "TEACHER".equalsIgnoreCase(role));
 
         if (hasTeacherRole) {
             Teacher teacher = teacherRepository.findByUserId(user.getId())
                     .orElseThrow(() ->
-                            new ResourceNotFoundException(
-                                    "Teacher profile not found"
-                            ));
+                            new ResourceNotFoundException("Teacher profile not found"));
 
             if (!"ACTIVE".equalsIgnoreCase(teacher.getStatus())) {
                 throw new IllegalArgumentException(
@@ -142,19 +194,18 @@ public class AuthServiceImpl implements AuthService {
                 );
             }
         }
-        String token = jwtService.generateToken(request.getUsername());
 
-        String primaryRole =
-                user.getRole() == null ? null : user.getRole().getName();
+        String token = jwtService.generateToken(user.getUsername());
 
-        var allRoles = user.getAllRoleNames()
-                .stream()
+        String primaryRole = user.getRole() == null
+                ? null
+                : user.getRole().getName();
+
+        var allRoles = roleNames.stream()
                 .sorted()
                 .toList();
 
-        Long schoolId = user.getSchool() == null
-                ? null
-                : user.getSchool().getId();
+        Long schoolId = user.getSchool().getId();
 
         return LoginResponseDto.builder()
                 .token(token)
@@ -166,22 +217,39 @@ public class AuthServiceImpl implements AuthService {
                 .build();
     }
 
+
     @Override
+    @Transactional
     public String forgotPassword(ForgotPasswordRequestDto request) {
 
-        User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "User not found with email: " + request.getEmail()
-                        ));
+        if (request.getEmail() == null || request.getEmail().isBlank()) {
+            throw new IllegalArgumentException("Email is required");
+        }
 
-        // Generate ONE reset token
+        if (request.getSchoolCode() == null
+                || request.getSchoolCode().isBlank()) {
+            throw new IllegalArgumentException("School Code is required");
+        }
+
+        String email = request.getEmail().trim();
+        String schoolCode = request.getSchoolCode().trim();
+
+        School school = schoolRepository.findByCode(schoolCode)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("Invalid email or School Code"));
+
+        User user = userRepository
+                .findByEmailAndSchool_Id(email, school.getId())
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("Invalid email or School Code"));
+
+        // Generate a single-use reset token.
         String resetToken = UUID.randomUUID().toString();
 
-        // Store only the hash in database
+        // Store only the hash in the database.
         user.setPasswordResetTokenHash(hashToken(resetToken));
 
-        // Token valid for 30 minutes
+        // Token expires after 30 minutes.
         user.setPasswordResetExpiresAt(
                 LocalDateTime.now().plusMinutes(30)
         );
@@ -193,16 +261,44 @@ public class AuthServiceImpl implements AuthService {
                 user.getUsername()
         );
 
-        // Temporary response for development/testing
+        // Retained for development/testing; use a secure email delivery
+        // workflow instead of returning the token in production.
         return "Password reset token generated: " + resetToken;
     }
 
+
     @Override
+    @Transactional
     public String resetPassword(ResetPasswordRequestDto request) {
 
-        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
+        if (request.getToken() == null || request.getToken().isBlank()) {
+            throw new IllegalArgumentException("Reset token is required");
+        }
+
+        if (request.getSchoolCode() == null
+                || request.getSchoolCode().isBlank()) {
+            throw new IllegalArgumentException("School Code is required");
+        }
+
+        if (request.getNewPassword() == null
+                || request.getConfirmPassword() == null
+                || !request.getNewPassword().equals(request.getConfirmPassword())) {
             throw new IllegalArgumentException("Passwords do not match");
         }
+
+        if (request.getNewPassword().length() < 8) {
+            throw new IllegalArgumentException(
+                    "Password must be at least 8 characters"
+            );
+        }
+
+        String schoolCode = request.getSchoolCode().trim();
+
+        School requestedSchool = schoolRepository.findByCode(schoolCode)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Invalid reset token or School Code"
+                        ));
 
         String tokenHash = hashToken(request.getToken());
 
@@ -215,14 +311,22 @@ public class AuthServiceImpl implements AuthService {
                 )
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
-                                "Invalid or expired token"
+                                "Invalid or expired reset token"
                         ));
+
+        // Ensure the reset token belongs to a user in the supplied school.
+        if (user.getSchool() == null
+                || !user.getSchool().getId().equals(requestedSchool.getId())) {
+            throw new ResourceNotFoundException(
+                    "Invalid reset token or School Code"
+            );
+        }
 
         user.setPassword(
                 passwordEncoder.encode(request.getNewPassword())
         );
 
-        // Make token single-use
+        // Invalidate the token after successful password reset.
         user.setPasswordResetTokenHash(null);
         user.setPasswordResetExpiresAt(null);
 

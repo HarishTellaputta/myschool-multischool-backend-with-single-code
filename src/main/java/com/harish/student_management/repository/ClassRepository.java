@@ -52,4 +52,15 @@ public interface ClassRepository extends JpaRepository<ClassEntity, Long> {
 
 
 
+    @Query("""
+    SELECT c
+    FROM ClassEntity c
+    JOIN FETCH c.school
+    WHERE c.id = :id
+    """)
+    Optional<ClassEntity> findByIdWithSchool(
+            @Param("id") Long id
+    );
+
+
 }

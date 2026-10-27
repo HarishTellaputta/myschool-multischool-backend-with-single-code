@@ -91,24 +91,23 @@ public class ClassServiceImpl implements ClassService {
     @Override
     public ClassResponseDto getClassById(Long id) {
 
-        logger.info(
-                "Fetching class with ID: {}",
-                id
-        );
+        logger.info("Fetching class with ID: {}", id);
 
         ClassEntity classEntity =
-                classRepository.findById(id)
+                classRepository.findByIdWithSchool(id)
                         .orElseThrow(() ->
                                 new ResourceNotFoundException(
-                                        "Class not found with id: "
-                                                + id
+                                        "Class not found with id: " + id
                                 )
                         );
 
-        Long currentSchoolId = currentSchoolService.getCurrentSchoolId();
+        Long currentSchoolId =
+                currentSchoolService.getCurrentSchoolId();
 
         if (classEntity.getSchool() == null
-                || !currentSchoolId.equals(classEntity.getSchool().getId())) {
+                || !currentSchoolId.equals(
+                classEntity.getSchool().getId())) {
+
             throw new ResourceNotFoundException(
                     "Class not found with id: " + id
             );
@@ -116,7 +115,6 @@ public class ClassServiceImpl implements ClassService {
 
         return mapToResponseDto(classEntity);
     }
-
     // =========================================================
     // GET ALL
     // =========================================================
