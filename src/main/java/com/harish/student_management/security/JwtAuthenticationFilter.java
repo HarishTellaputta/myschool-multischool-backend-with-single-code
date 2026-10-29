@@ -52,8 +52,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String authHeader = request.getHeader("Authorization");
 
-        // No Authorization header
+        System.out.println("===== JWT DEBUG =====");
+        System.out.println("REQUEST URI: " + request.getRequestURI());
+        System.out.println("AUTH HEADER PRESENT: " +
+                (authHeader != null && authHeader.startsWith("Bearer ")));
+
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            System.out.println("JWT SKIPPED: Authorization header missing");
             filterChain.doFilter(request, response);
             return;
         }

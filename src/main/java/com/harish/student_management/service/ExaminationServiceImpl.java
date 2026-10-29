@@ -1024,6 +1024,7 @@ public class ExaminationServiceImpl implements ExaminationService {
 
 
 
+
     @Override
     @Transactional
     public GradeRuleImportResponseDto importGradeRulesExcel(MultipartFile file) {
@@ -1062,6 +1063,7 @@ public class ExaminationServiceImpl implements ExaminationService {
                         "Excel header row is missing");
             }
 
+            // Expected headers: grade, minPercentage, maxPercentage
             validateGradeRuleHeader(headerRow);
 
             for (int rowIndex = 1;
@@ -1078,34 +1080,38 @@ public class ExaminationServiceImpl implements ExaminationService {
                 int excelRowNumber = rowIndex + 1;
 
                 try {
-                    Long id = getLongValue(row.getCell(0));
-                    String grade = getStringValue(row.getCell(1));
-                    Double minimumPercentage = getDoubleValue(row.getCell(2));
-                    Double maximumPercentage = getDoubleValue(row.getCell(3));
+                    // Read columns according to the Excel template.
+                    String grade = getStringValue(row.getCell(0));
+                    Double minimumPercentage =
+                            getDoubleValue(row.getCell(1));
+                    Double maximumPercentage =
+                            getDoubleValue(row.getCell(2));
 
-                    // Validate required fields
+                    // Validate grade.
                     if (grade == null || grade.isBlank()) {
-                        throw new IllegalArgumentException("Grade is required");
+                        throw new IllegalArgumentException(
+                                "Grade is required");
                     }
 
                     grade = grade.trim();
 
+                    // Validate minimum percentage.
                     if (minimumPercentage == null) {
                         throw new IllegalArgumentException(
                                 "Minimum Percentage is required");
                     }
 
-                    if (maximumPercentage == null) {
-                        throw new IllegalArgumentException(
-                                "Maximum Percentage is required");
-                    }
-
-                    // Validate percentage range
                     if (!Double.isFinite(minimumPercentage)
                             || minimumPercentage < 0
                             || minimumPercentage > 100) {
                         throw new IllegalArgumentException(
                                 "Minimum Percentage must be between 0 and 100");
+                    }
+
+                    // Validate maximum percentage.
+                    if (maximumPercentage == null) {
+                        throw new IllegalArgumentException(
+                                "Maximum Percentage is required");
                     }
 
                     if (!Double.isFinite(maximumPercentage)
@@ -1120,55 +1126,42 @@ public class ExaminationServiceImpl implements ExaminationService {
                                 "Minimum Percentage cannot exceed Maximum Percentage");
                     }
 
-                    // Load only this school's existing rule when updating
-                    GradeRule gradeRule;
+                    /*
+                     * Find the existing grade only within the current school.
+                     * If found, update it; otherwise create a new rule.
+                     */
+                    GradeRule gradeRule = gradeRuleRepository
+                            .findBySchool_IdAndGradeIgnoreCase(
+                                    schoolId, grade)
+                            .orElse(null);
 
-                    if (id != null) {
-                        gradeRule = gradeRuleRepository
-                                .findByIdAndSchool_Id(id, schoolId)
-                                .orElseThrow(() ->
-                                        new IllegalArgumentException(
-                                                "Grade rule not found in this school"));
-                    } else {
+                    boolean isNew = (gradeRule == null);
+
+                    if (isNew) {
                         gradeRule = GradeRule.builder()
                                 .school(currentSchoolService.getCurrentSchool())
                                 .build();
                     }
 
-                    // Prevent duplicate grade names in the same school.
-                    // Exclude the current rule when updating.
-                    boolean duplicateGrade =
-                            gradeRuleRepository
-                                    .existsBySchool_IdAndGradeIgnoreCase(
-                                            schoolId, grade)
-                                    && (id == null
-                                    || gradeRuleRepository
-                                    .findBySchool_IdAndGradeIgnoreCase(
-                                            schoolId, grade)
-                                    .map(existing ->
-                                            !existing.getId().equals(id))
-                                    .orElse(false));
-
-                    if (duplicateGrade) {
-                        throw new IllegalArgumentException(
-                                "Grade already exists in this school: " + grade);
-                    }
-
-                    // Prevent overlapping ranges with other rules in this school.
+                    /*
+                     * Validate percentage overlap.
+                     * Exclude the current rule when updating.
+                     */
                     validateGradeRuleOverlap(
                             schoolId,
                             minimumPercentage,
                             maximumPercentage,
-                            id
+                            gradeRule.getId()
                     );
 
+                    // Set the values from Excel.
                     gradeRule.setGrade(grade);
                     gradeRule.setMinimumPercentage(minimumPercentage);
                     gradeRule.setMaximumPercentage(maximumPercentage);
 
                     gradeRuleRepository.save(gradeRule);
 
-                    if (id == null) {
+                    if (isNew) {
                         created++;
                     } else {
                         updated++;
@@ -1203,21 +1196,43 @@ public class ExaminationServiceImpl implements ExaminationService {
     private void validateGradeRuleHeader(Row headerRow) {
 
         String[] expectedHeaders = {
-                "ID",
                 "Grade",
                 "Minimum Percentage",
                 "Maximum Percentage"
         };
 
+        String[] acceptedHeaders = {
+                "grade",
+                "minpercentage",
+                "maxpercentage"
+        };
+
         for (int i = 0; i < expectedHeaders.length; i++) {
 
-            String actual = getStringValue(headerRow.getCell(i));
+            Cell cell = headerRow.getCell(i);
 
-            if (!expectedHeaders[i].equalsIgnoreCase(actual)) {
+            String actual = cell == null
+                    ? ""
+                    : getStringValue(cell).trim();
 
+            boolean valid;
+
+            if (i == 0) {
+                valid = actual.equalsIgnoreCase("Grade");
+            } else if (i == 1) {
+                valid = actual.equalsIgnoreCase("Minimum Percentage")
+                        || actual.equalsIgnoreCase("minPercentage");
+            } else {
+                valid = actual.equalsIgnoreCase("Maximum Percentage")
+                        || actual.equalsIgnoreCase("maxPercentage");
+            }
+
+            if (!valid) {
                 throw new IllegalArgumentException(
                         "Invalid Excel header at column " + (i + 1)
                                 + ". Expected: " + expectedHeaders[i]
+                                + " or " + acceptedHeaders[i]
+                                + ", Found: " + actual
                 );
             }
         }

@@ -24,6 +24,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.time.DayOfWeek;
@@ -469,11 +470,23 @@ public class TeacherTimetableServiceImpl
     // GET TIMETABLE BY STUDENT
     // =========================================================
 
+
+    // =========================================================
+    // GET TIMETABLE BY STUDENT
+    // =========================================================
+
     @Override
+    @Transactional(readOnly = true)
     public List<TeacherTimetableResponseDto>
     getTimetableByStudentId(Long studentId) {
 
         Long schoolId = currentSchoolService.getCurrentSchoolId();
+
+        if (schoolId == null) {
+            throw new IllegalStateException(
+                    "Current school could not be determined"
+            );
+        }
 
         var student = studentRepository.findById(studentId)
                 .orElseThrow(() ->
@@ -482,12 +495,18 @@ public class TeacherTimetableServiceImpl
                         )
                 );
 
-        if (student.getSection() == null
-                || student.getSection().getClassEntity() == null) {
+        // Access lazy-loaded relationships inside the transaction.
+        var section = student.getSection();
+
+        if (section == null) {
             return List.of();
         }
 
-        var classEntity = student.getSection().getClassEntity();
+        var classEntity = section.getClassEntity();
+
+        if (classEntity == null) {
+            return List.of();
+        }
 
         if (classEntity.getSchool() == null
                 || !schoolId.equals(classEntity.getSchool().getId())) {
@@ -497,14 +516,16 @@ public class TeacherTimetableServiceImpl
         }
 
         Long classId = classEntity.getId();
-        Long sectionId = student.getSection().getId();
+        Long sectionId = section.getId();
 
         return timetableRepository
                 .findByClassIdAndSchoolId(classId, schoolId)
                 .stream()
                 .filter(timetable ->
                         timetable.getSection() == null
-                                || timetable.getSection().getId().equals(sectionId)
+                                || sectionId.equals(
+                                timetable.getSection().getId()
+                        )
                 )
                 .map(this::mapToResponseDto)
                 .toList();

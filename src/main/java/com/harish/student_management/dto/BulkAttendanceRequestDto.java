@@ -1,6 +1,9 @@
+
 package com.harish.student_management.dto;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
@@ -25,6 +28,10 @@ public class BulkAttendanceRequestDto {
     @NotNull(message = "Attendance date is required")
     private LocalDate attendanceDate;
 
+    @Min(value = 1, message = "Period number must be at least 1")
+    @Max(value = 20, message = "Period number cannot exceed 20")
+    private Integer periodNumber;
+
     @NotEmpty(message = "Attendance records cannot be empty")
     @Valid
     private List<StudentAttendanceDto> attendanceRecords;
@@ -34,6 +41,7 @@ public class BulkAttendanceRequestDto {
     @AllArgsConstructor
     @Builder
     public static class StudentAttendanceDto {
+
         @NotNull(message = "Student ID is required")
         private Long studentId;
 

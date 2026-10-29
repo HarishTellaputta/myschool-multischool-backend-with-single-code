@@ -43,6 +43,10 @@ public class ParentController {
     public ParentResponseDto getMyProfile(
             Authentication authentication) {
 
+        System.out.println(">>> PARENT CONTROLLER REACHED <<<");
+        System.out.println("USERNAME: " + authentication.getName());
+        System.out.println("AUTHORITIES: " + authentication.getAuthorities());
+
         return parentService.getMyProfile(
                 authentication.getName()
         );

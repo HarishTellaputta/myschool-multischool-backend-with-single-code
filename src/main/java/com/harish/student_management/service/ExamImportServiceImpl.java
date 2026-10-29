@@ -1464,18 +1464,20 @@ public class ExamImportServiceImpl implements ExamImportService {
 
                     ClassEntity clazz =
                             classRepository
-                                    .findByNameIgnoreCase(
-                                            className.trim()
+                                    .findByNameIgnoreCaseAndSchool_Id(
+                                            className.trim(),
+                                            schoolId
                                     )
                                     .orElseThrow(() ->
                                             new IllegalArgumentException(
-                                                    "Class not found: " +
-                                                            className
+                                                    "Class not found in current school: "
+                                                            + className
                                             ));
 
                     System.out.println(
-                            "CLASS FOUND: ID=" +
-                                    clazz.getId()
+                            "CLASS FOUND: ID=" + clazz.getId()
+                                    + ", NAME=" + clazz.getName()
+                                    + ", SCHOOL ID=" + clazz.getSchool().getId()
                     );
 
                     // -------------------------------------------------
@@ -1523,18 +1525,19 @@ public class ExamImportServiceImpl implements ExamImportService {
 
                     Subject subject =
                             subjectRepository
-                                    .findByNameIgnoreCase(
-                                            subjectName.trim()
+                                    .findByNameIgnoreCaseAndSchoolId(
+                                            subjectName.trim(),
+                                            schoolId
                                     )
                                     .orElseThrow(() ->
                                             new IllegalArgumentException(
-                                                    "Subject not found: " +
-                                                            subjectName
+                                                    "Subject not found in current school: "
+                                                            + subjectName
                                             ));
 
                     System.out.println(
-                            "SUBJECT FOUND: ID=" +
-                                    subject.getId()
+                            "SUBJECT FOUND: ID=" + subject.getId()
+                                    + ", NAME=" + subject.getName()
                     );
 
                     // -------------------------------------------------
@@ -1584,16 +1587,22 @@ public class ExamImportServiceImpl implements ExamImportService {
                                     examDate,
                                     schoolId
                             )
-                            .orElse(null);
+                            .orElseThrow(() ->
+                                    new IllegalArgumentException(
+                                            "Exam schedule not found for examination: "
+                                                    + examinationName
+                                                    + ", class: " + className
+                                                    + ", section: " + sectionName
+                                                    + ", subject: " + subjectName
+                                                    + ", date: " + examDate
+                                    ));
 
                     System.out.println(
-                            "SCHEDULE FOUND: ID=" +
-                                    schedule.getId()
+                            "SCHEDULE FOUND: ID=" + schedule.getId()
                     );
 
                     System.out.println(
-                            "SCHEDULE MAX MARKS: " +
-                                    schedule.getMaxMarks()
+                            "SCHEDULE MAX MARKS: " + schedule.getMaxMarks()
                     );
 
                     // -------------------------------------------------
