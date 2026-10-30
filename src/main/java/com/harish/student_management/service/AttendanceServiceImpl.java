@@ -168,18 +168,24 @@ public class AttendanceServiceImpl implements AttendanceService {
             );
         }
 
-        // 6. School-scoped duplicate check
+        Integer periodNumber = resolvePeriodNumber(
+                classEntity,
+                request.getPeriodNumber()
+        );
+
+
         boolean alreadyMarked = attendanceRepository
-                .existsByStudent_IdAndClassEntity_IdAndClassEntity_School_IdAndAttendanceDate(
+                .existsByStudent_IdAndClassEntity_IdAndClassEntity_School_IdAndAttendanceDateAndPeriodNumber(
                         student.getId(),
                         classEntity.getId(),
                         schoolId,
-                        request.getAttendanceDate()
+                        request.getAttendanceDate(),
+                        periodNumber
                 );
 
         if (alreadyMarked) {
             throw new IllegalArgumentException(
-                    "Attendance already marked for this student on this date. "
+                    "Attendance already marked for this student, date, and period. "
                             + "Use update endpoint to modify."
             );
         }
@@ -190,6 +196,7 @@ public class AttendanceServiceImpl implements AttendanceService {
                 .classEntity(classEntity)
                 .markedByTeacher(teacher)
                 .attendanceDate(request.getAttendanceDate())
+                .periodNumber(periodNumber)
                 .status(status)
                 .remarks(request.getRemarks())
                 .build();
@@ -272,6 +279,11 @@ public class AttendanceServiceImpl implements AttendanceService {
             );
         }
 
+        Integer periodNumber = resolvePeriodNumber(
+                classEntity,
+                request.getPeriodNumber()
+        );
+
         final Teacher markedByTeacher = teacher;
 
         // 3. Validate all records before saving any attendance
@@ -310,28 +322,33 @@ public class AttendanceServiceImpl implements AttendanceService {
             // Normalize and validate status
             String status = normalizeStatus(record.getStatus());
 
-            // School-scoped duplicate attendance check
+
             boolean alreadyMarked = attendanceRepository
-                    .existsByStudent_IdAndClassEntity_IdAndClassEntity_School_IdAndAttendanceDate(
+                    .existsByStudent_IdAndClassEntity_IdAndClassEntity_School_IdAndAttendanceDateAndPeriodNumber(
                             student.getId(),
                             classEntity.getId(),
                             schoolId,
-                            request.getAttendanceDate()
+                            request.getAttendanceDate(),
+                            periodNumber
                     );
 
             if (alreadyMarked) {
                 throw new IllegalArgumentException(
                         "Attendance already marked for student "
                                 + student.getId()
-                                + " on this date"
+                                + " on this date and period "
+                                + periodNumber
+                                + ". Use update endpoint to modify."
                 );
             }
+
 
             Attendance attendance = Attendance.builder()
                     .student(student)
                     .classEntity(classEntity)
                     .markedByTeacher(markedByTeacher)
                     .attendanceDate(request.getAttendanceDate())
+                    .periodNumber(periodNumber)
                     .status(status)
                     .remarks(record.getRemarks())
                     .build();
@@ -1151,6 +1168,7 @@ public class AttendanceServiceImpl implements AttendanceService {
                                 : null
                 )
                 .attendanceDate(attendance.getAttendanceDate())
+                .periodNumber(attendance.getPeriodNumber())
                 .status(attendance.getStatus())
                 .remarks(attendance.getRemarks())
                 .markedAt(attendance.getMarkedAt())
@@ -1502,7 +1520,67 @@ public class AttendanceServiceImpl implements AttendanceService {
 
         return responses;
     }
+
+
+
+    private Integer resolvePeriodNumber(
+            ClassEntity classEntity,
+            Integer requestedPeriodNumber
+    ) {
+        if (classEntity.getSchool() == null) {
+            throw new IllegalStateException(
+                    "School configuration not found for this class"
+            );
+        }
+
+        String mode = classEntity.getSchool().getAttendanceMode();
+
+        if (mode == null || mode.isBlank()) {
+            mode = "SINGLE";
+        }
+
+        mode = mode.trim().toUpperCase(Locale.ROOT);
+
+        if ("SINGLE".equals(mode)) {
+            // Daily attendance is stored with period number 0.
+            return 0;
+        }
+
+        if (!"PERIOD_WISE".equals(mode)) {
+            throw new IllegalStateException(
+                    "Invalid attendance mode configured: " + mode
+            );
+        }
+
+        if (requestedPeriodNumber == null) {
+            throw new IllegalArgumentException(
+                    "Period number is required for period-wise attendance"
+            );
+        }
+
+        Integer configuredPeriodCount =
+                classEntity.getSchool().getAttendancePeriodCount();
+
+        if (configuredPeriodCount == null
+                || configuredPeriodCount < 1
+                || configuredPeriodCount > 20) {
+            throw new IllegalStateException(
+                    "Invalid attendance period count configured for this school"
+            );
+        }
+
+        if (requestedPeriodNumber < 1
+                || requestedPeriodNumber > configuredPeriodCount) {
+            throw new IllegalArgumentException(
+                    "Period number must be between 1 and "
+                            + configuredPeriodCount
+            );
+        }
+
+        return requestedPeriodNumber;
     }
+
+}
 
 
 

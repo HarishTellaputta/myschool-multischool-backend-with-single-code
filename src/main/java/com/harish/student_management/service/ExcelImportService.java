@@ -640,12 +640,45 @@ public class ExcelImportService {
                 )
         );
 
-        Boolean transportRequired =
-                getBoolean(
-                        row,
-                        columns,
-                        "transportRequired"
+//        Boolean transportRequired =
+//                getBoolean(
+//                        row,
+//                        columns,
+//                        "transportRequired"
+//                );
+//
+//        student.setTransportRequired(
+//                transportRequired != null
+//                        ? transportRequired
+//                        : false
+//        );
+
+
+        String transportValue = getString(
+                row,
+                columns,
+                "transportRequired"
+        );
+
+        Boolean transportRequired = null;
+
+        if (transportValue != null && !transportValue.trim().isEmpty()) {
+            if (transportValue.trim().equalsIgnoreCase("YES")) {
+                transportRequired = true;
+            } else if (transportValue.trim().equalsIgnoreCase("NO")) {
+                transportRequired = false;
+            } else if (transportValue.trim().equalsIgnoreCase("TRUE")) {
+                transportRequired = true;
+            } else if (transportValue.trim().equalsIgnoreCase("FALSE")) {
+                transportRequired = false;
+            } else {
+                throw new IllegalArgumentException(
+                        "Invalid transportRequired value: "
+                                + transportValue
+                                + ". Allowed values: YES or NO"
                 );
+            }
+        }
 
         student.setTransportRequired(
                 transportRequired != null
